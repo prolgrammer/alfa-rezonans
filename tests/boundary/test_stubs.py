@@ -1,25 +1,44 @@
 import datetime as dt
 
 import pytest
+from pydantic import BaseModel, TypeAdapter
 
+from app.agent import run
+from app.agent.run import run_chat, run_insight
+from app.agent.tools import build_tools
+from app.bank.theses import extract_theses, get_bank_view
 from app.clients.counterparties import get_counterparties, get_sector_exposure
 from app.clients.exposures import exposures
 from app.clients.profile import feature_phrase, get_profile, profile_compact
 from app.collect.market import get_market_series
 from app.contracts import (
     Access,
+    AgentStep,
+    BankThesis,
+    ChatAnswer,
+    ChatTurn,
     CounterpartyShare,
+    EventCard,
     Exposure,
     FeedFilters,
     FeedItem,
+    InsightResult,
+    JudgeScore,
+    NewsFilterResult,
     NewsHit,
     Period,
+    RawItemIn,
     RelevanceScore,
     SessionCtx,
+    ThesisItem,
     UserRole,
 )
+from app.llm.gateway import LLMUnavailable, ToolSpec, gw
+from app.news.extract import extract_event_card, news_filter
 from app.news.search import get_event_sources, search_bank_chunks, search_news
 from app.rank.feed import explain, highlights, rank_feed, warm_list
+from app.rank.judge import rank_judge
+from app.settings import get_settings
 
 DEV = SessionCtx(user_id=1, company_id="C-DEV-01", user_role=UserRole.cfo, access=Access.client)
 IT = SessionCtx(user_id=2, company_id="C-IT-01", user_role=UserRole.cfo, access=Access.client)
@@ -127,3 +146,143 @@ async def test_market_series_cut_by_days():
     assert cut.value == full.value
     with pytest.raises(LookupError):
         await get_market_series("unknown", 30)
+
+
+@pytest.fixture
+def no_delay(monkeypatch):
+    monkeypatch.setattr(run, "STEP_DELAY_S", (0, 0))
+
+
+async def test_gateway_is_unavailable():
+    with pytest.raises(LLMUnavailable, match="ML-1"):
+        await gw.json("task", "prompt", {}, InsightResult)
+    with pytest.raises(LLMUnavailable):
+        await gw.tools_step("task", [], [ToolSpec(name="t", description="d", parameters={})])
+    with pytest.raises(LLMUnavailable):
+        await gw.vision("task", "prompt", b"", InsightResult)
+
+
+async def test_news_filter_passes_everything():
+    item = RawItemIn(
+        id=7,
+        source_id="cbr",
+        title="Новость",
+        summary=None,
+        url="https://example.test/1",
+        published_at="2026-10-20T10:00:00+03:00",
+    )
+    (result,) = await news_filter([item])
+    assert isinstance(result, NewsFilterResult)
+    assert (result.raw_item_id, result.business) == (7, True)
+
+
+async def test_extract_event_card():
+    card = await extract_event_card(1)
+    assert isinstance(card, EventCard)
+    assert card.event_type == "regulator_decision"
+    assert await extract_event_card(999) is None
+
+
+async def test_bank_view_is_verified_and_fresh():
+    items = await get_bank_view("key_rate")
+    assert items and len(items) <= 3
+    assert all(isinstance(i, ThesisItem) and i.verified is True for i in items)
+    dates = [i.published_on for i in items]
+    assert dates == sorted(dates, reverse=True)
+    assert len(await get_bank_view("key_rate", limit=1)) == 1
+
+
+async def test_extract_theses_by_doc():
+    theses = await extract_theses(1)
+    assert theses and all(isinstance(t, BankThesis) for t in theses)
+    assert await extract_theses(999) == []
+
+
+async def test_rank_judge_stub_is_empty():
+    compact = profile_compact(await get_profile("C-DEV-01"), UserRole.cfo)
+    card = await extract_event_card(1)
+    result: list[JudgeScore] = await rank_judge(compact, [(1, card)])
+    assert result == []
+
+
+async def test_run_insight_sequence(no_delay):
+    items = [x async for x in run_insight(DEV, 1)]
+    *steps, last = items
+    assert steps and all(isinstance(s, AgentStep) for s in steps)
+    assert [s.seq for s in steps] == list(range(1, len(steps) + 1))
+    assert isinstance(last, InsightResult)
+
+
+async def test_run_insight_unknown_event_fails_before_first_step(no_delay):
+    with pytest.raises(LookupError):
+        await anext(run_insight(DEV, 999))
+
+
+async def test_run_chat_sequence(no_delay):
+    history = [ChatTurn(author="user", text="Привет")]
+    items = [x async for x in run_chat(DEV, 1, history, "Что говорит банк?")]
+    *steps, last = items
+    assert [s.kind for s in steps] == ["plan", "tool", "final"]
+    assert [s.seq for s in steps] == [1, 2, 3]
+    assert isinstance(last, ChatAnswer)
+    assert isinstance([x async for x in run_chat(DEV, None, [], "Вопрос")][-1], ChatAnswer)
+    with pytest.raises(LookupError):
+        await anext(run_chat(DEV, 999, [], "Вопрос"))
+
+
+VALID_ARGS = {
+    "get_company_profile": {"section": "overview"},
+    "get_counterparties": {"direction": "suppliers", "top": 3},
+    "get_bank_view": {"factor": "key_rate"},
+    "search_bank_research": {"query": "ставка", "factor": "key_rate"},
+    "get_market_data": {"series": "cbr_key_rate", "days": 30},
+    "search_news": {"query": "ставка ЦБ"},
+    "get_event_sources": {"hint": "решение"},
+    "get_sector_exposure": {"sector": "metallurgy", "factor": "steel"},
+}
+
+
+async def test_build_tools_has_exactly_the_nine_tools():
+    assert set(build_tools(DEV, 1)) == {*VALID_ARGS, "submit_insight"}
+
+
+@pytest.mark.parametrize("name", sorted(VALID_ARGS))
+async def test_tool_run_returns_contract_models(name):
+    tool = build_tools(DEV, 1)[name]
+    result = await tool.run(tool.args.model_validate(VALID_ARGS[name]))
+    items = result if isinstance(result, list) else [result]
+    assert items and all(isinstance(i, BaseModel) for i in items)
+
+
+async def test_submit_insight_returns_draft():
+    raw = (get_settings().fixtures_dir / "insight.json").read_bytes()
+    draft = TypeAdapter(InsightResult).validate_json(raw).insight
+    tool = build_tools(DEV, 1)["submit_insight"]
+    assert await tool.run(tool.args(draft=draft)) == draft
+
+
+async def test_company_profile_sections():
+    tool = build_tools(DEV, 1)["get_company_profile"]
+
+    async def keys(section: str) -> list[str]:
+        return [f.key for f in await tool.run(tool.args(section=section))]
+
+    overview = await keys("overview")
+    assert "sector" in overview
+    assert not [k for k in overview if k.startswith(("products.", "group.", "regions"))]
+    assert await keys("products") == ["products.LOA", "products.GAR", "products.DEP", "products.LEA"]
+    exposures_result = await tool.run(tool.args(section="exposures"))
+    assert exposures_result == (await get_profile("C-DEV-01")).exposures
+
+
+async def test_tools_read_company_from_session():
+    dev = build_tools(DEV, 1)["get_company_profile"]
+    it = build_tools(IT, 1)["get_company_profile"]
+    args = dev.args(section="overview")
+    assert await dev.run(args) != await it.run(args)
+
+
+async def test_search_bank_research_without_factor_has_no_theses():
+    tool = build_tools(DEV, 1)["search_bank_research"]
+    result = await tool.run(tool.args(query="ставка"))
+    assert result.theses == [] and result.chunks
