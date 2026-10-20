@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -5,7 +6,7 @@ import psycopg
 import typer
 
 from app.db import MigrationError, migrate_down, migrate_up
-from app.settings import get_settings
+from app.settings import REPO_ROOT, get_settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Ориентир: данные, сбор, агент, проверки")
 llm_app = typer.Typer(no_args_is_help=True, help="Шлюз моделей")
@@ -50,9 +51,23 @@ def migrate(
 
 
 @app.command()
-def openapi() -> None:
+def openapi(
+    check: Annotated[bool, typer.Option("--check", help="Только сверить файл, код 1 если устарел")] = False,
+) -> None:
     """Записать docs/openapi.json."""
-    not_implemented("задача 5")
+    # импорт здесь: создание приложения читает настройки, а остальным командам они не нужны
+    from app.api.main import app as api_app
+
+    target = REPO_ROOT / "docs" / "openapi.json"
+    text = json.dumps(api_app.openapi(), indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    if check:
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
+            typer.echo("docs/openapi.json устарел: выполните `orientir openapi`", err=True)
+            raise typer.Exit(1)
+        typer.echo("docs/openapi.json актуален")
+        return
+    target.write_text(text, encoding="utf-8", newline="\n")
+    typer.echo(f"Записан {target.relative_to(REPO_ROOT)}")
 
 
 @app.command()
