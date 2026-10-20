@@ -1,9 +1,14 @@
-import re
 import unicodedata
 
-# \n и \t нужны абзацам; остальные управляющие и «невидимые» символы прячут инструкции от глаза читающего
-_STRIP = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f​-‏‪-‮⁠-⁤﻿]")
+# Cf (в том числе теги U+E0000 и изоляты двунаправленного текста), Co и Cn прячут инструкции от глаза
+# читающего; Cc тоже, кроме \n и \t, которые нужны абзацам. Список диапазонов вручную всегда отстаёт
+# от Юникода, поэтому отбираем по категории.
+_DROPPED = frozenset({"Cf", "Cc", "Co", "Cn"})
+_KEPT_CONTROLS = frozenset({"\n", "\t"})
 
 
 def sanitize(text: str) -> str:
-    return _STRIP.sub("", unicodedata.normalize("NFKC", text))
+    normalized = unicodedata.normalize("NFKC", text)
+    return "".join(
+        ch for ch in normalized if ch in _KEPT_CONTROLS or unicodedata.category(ch) not in _DROPPED
+    )
