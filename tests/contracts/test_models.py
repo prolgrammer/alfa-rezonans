@@ -1,6 +1,7 @@
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from app import contracts
 from app.contracts import (
     Access,
     EventCard,
@@ -140,7 +141,7 @@ def test_session_ctx_is_frozen():
 
 
 def test_feature_source_pattern():
-    Feature(key="products.loa", value=True, source="csv:REVENUE_COMPANY", detail=None)
+    Feature(key="products.LOA", value=True, source="csv:REVENUE_COMPANY", detail=None)
     Feature(key="suppliers.metallurgy", value=0.31, source="calc:suppliers", detail=None)
     Feature(key="sector", value="development", source="group", detail=None)
     with pytest.raises(ValidationError):
@@ -151,3 +152,50 @@ def test_feature_source_pattern():
 def test_feature_value_accepts_json(value):
     feature = Feature(key="k", value=value, source="user", detail=None)
     assert TypeAdapter(Feature).validate_json(feature.model_dump_json()).value == value
+
+
+def test_naive_datetime_rejected():
+    ref = dict(EVIDENCE["ref"])
+    NewsRef.model_validate(ref)
+    ref["published_at"] = "2026-09-11T13:30:00"
+    with pytest.raises(ValidationError):
+        NewsRef.model_validate(ref)
+
+
+def test_every_exported_model_forbids_extra():
+    models = [
+        obj
+        for name in contracts.__all__
+        if isinstance(obj := getattr(contracts, name), type) and issubclass(obj, BaseModel)
+    ]
+    assert len(models) > 40
+    for model in models:
+        assert model.model_config.get("extra") == "forbid", model.__name__
+
+
+def test_duplicate_statement_ids_rejected():
+    insight = insight_dict(risks=[statement(["E1"])])
+    with pytest.raises(ValidationError, match="повторяются: s1"):
+        InsightResult.model_validate(result_dict(insight))
+
+
+def test_empty_human_text_rejected():
+    with pytest.raises(ValidationError):
+        Insight.model_validate(insight_dict(headline=""))
+    bad = statement(["E1"]) | {"text": ""}
+    with pytest.raises(ValidationError):
+        Insight.model_validate(insight_dict(what_happened=[bad]))
+
+
+def test_ref_kind_is_required():
+    ref = {k: v for k, v in EVIDENCE["ref"].items() if k != "kind"}
+    with pytest.raises(ValidationError):
+        NewsRef.model_validate(ref)
+
+
+def test_feature_key_accepts_tz_spelling():
+    for key in ("products.LOA", "products.GAR", "suppliers.metallurgy", "market_position.percentile"):
+        Feature(key=key, value=1, source="user", detail=None)
+    for key in ("Products.LOA", "products.", "1x"):
+        with pytest.raises(ValidationError):
+            Feature(key=key, value=1, source="user", detail=None)

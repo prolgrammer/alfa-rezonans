@@ -50,8 +50,8 @@
         ],
         "confidence": "medium",
         "feature_keys": [
-          "products.loa",
-          "products.gar"
+          "products.LOA",
+          "products.GAR"
         ]
       },
       {
@@ -282,7 +282,7 @@
       "text": "Кредитные продукты банка: есть.",
       "ref": {
         "kind": "feature",
-        "feature_key": "products.loa",
+        "feature_key": "products.LOA",
         "source": "csv:CL_PRODUCT_LOA_MARK"
       }
     },
@@ -292,7 +292,7 @@
       "text": "Банковские гарантии: есть.",
       "ref": {
         "kind": "feature",
-        "feature_key": "products.gar",
+        "feature_key": "products.GAR",
         "source": "csv:CL_PRODUCT_GAR_MARK"
       }
     },

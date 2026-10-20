@@ -1,14 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import Field, JsonValue
 
+from app.contracts._base import ContractModel
 from app.contracts.enums import StepKind
 from app.contracts.types import Slug
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class ToolCallRecord(_Model):
+class ToolCallRecord(ContractModel):
     tool: Slug
     args: dict[str, JsonValue]
     result_chars: int = Field(ge=0)
@@ -17,7 +14,7 @@ class ToolCallRecord(_Model):
     error: str | None = Field(max_length=300)
 
 
-class AgentStep(_Model):
+class AgentStep(ContractModel):
     seq: int = Field(ge=1)
     kind: StepKind
     title: str = Field(max_length=120)

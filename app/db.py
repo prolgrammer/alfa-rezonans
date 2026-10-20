@@ -1,3 +1,4 @@
+import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,25 +109,29 @@ def migrate_down(conn: psycopg.Connection, directory: Path, steps: int = 1) -> l
 
 
 _pool: AsyncConnectionPool | None = None
+# без замка два одновременных первых вызова открыли бы по пулу, и один из них утёк бы
+_pool_lock = asyncio.Lock()
 
 
 async def get_pool() -> AsyncConnectionPool:
     global _pool
-    if _pool is None:
-        pool = AsyncConnectionPool(
-            get_settings().database_url,
-            min_size=1,
-            max_size=10,
-            kwargs={"row_factory": dict_row},
-            open=False,
-        )
-        await pool.open(wait=True, timeout=30)
-        _pool = pool
-    return _pool
+    async with _pool_lock:
+        if _pool is None:
+            pool = AsyncConnectionPool(
+                get_settings().database_url,
+                min_size=1,
+                max_size=10,
+                kwargs={"row_factory": dict_row},
+                open=False,
+            )
+            await pool.open(wait=True, timeout=30)
+            _pool = pool
+        return _pool
 
 
 async def close_pool() -> None:
     global _pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
+    async with _pool_lock:
+        if _pool is not None:
+            await _pool.close()
+            _pool = None

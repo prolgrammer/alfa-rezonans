@@ -1,20 +1,17 @@
 import datetime as dt
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from app.contracts._base import ContractModel
 from app.contracts.types import Slug
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class MarketPoint(_Model):
+class MarketPoint(ContractModel):
     date: dt.date
     value: float
 
 
-class MarketSeries(_Model):
+class MarketSeries(ContractModel):
     series: Slug
     name: str = Field(max_length=120)
     unit: str = Field(max_length=20)

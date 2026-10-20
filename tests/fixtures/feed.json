@@ -14,7 +14,7 @@
           "term": "exposure",
           "text": "Есть кредиты: ставка влияет на расходы по долгу",
           "feature_keys": [
-            "products.loa"
+            "products.LOA"
           ]
         },
         {
@@ -132,7 +132,7 @@
           "term": "exposure",
           "text": "Есть депозиты: высокая ставка повышает доход",
           "feature_keys": [
-            "products.dep"
+            "products.DEP"
           ]
         },
         {

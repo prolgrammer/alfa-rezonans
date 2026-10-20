@@ -1,24 +1,21 @@
 import datetime as dt
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from app.contracts._base import ContractModel
 from app.contracts.enums import FactorDirection, Horizon, ThesisKind
 from app.contracts.types import Slug
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class ThesisNumber(_Model):
+class ThesisNumber(ContractModel):
     what: str = Field(max_length=120)
     value: float
     unit: str = Field(max_length=20)
 
 
-class BankThesis(_Model):
-    text: str = Field(max_length=500)
+class BankThesis(ContractModel):
+    text: str = Field(min_length=1, max_length=500)
     quote: str = Field(max_length=600)
     page: int = Field(ge=1)
     kind: ThesisKind
@@ -28,7 +25,7 @@ class BankThesis(_Model):
     numbers: list[ThesisNumber] = Field(max_length=10)
 
 
-class ThesisItem(_Model):
+class ThesisItem(ContractModel):
     id: int
     doc_id: int
     doc_title: str = Field(max_length=300)
@@ -37,7 +34,7 @@ class ThesisItem(_Model):
     thesis: BankThesis
 
 
-class BankChunk(_Model):
+class BankChunk(ContractModel):
     id: int
     doc_id: int
     doc_title: str = Field(max_length=300)

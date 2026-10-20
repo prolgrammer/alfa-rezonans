@@ -1,8 +1,9 @@
 import datetime as dt
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, Field
 
+from app.contracts._base import ContractModel
 from app.contracts.enums import (
     CardStatus,
     Certainty,
@@ -17,54 +18,50 @@ from app.contracts.types import Slug
 Cites = Annotated[list[Annotated[int, Field(ge=1, le=5)]], Field(min_length=1, max_length=5)]
 
 
-class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class CardFact(_Model):
+class CardFact(ContractModel):
     text: str = Field(max_length=400)
     cites: Cites
     quote: str = Field(max_length=500)
 
 
-class CardClaim(_Model):
+class CardClaim(ContractModel):
     text: str = Field(max_length=400)
     who: str = Field(max_length=120)
     cites: Cites
     quote: str = Field(max_length=500)
 
 
-class CardDate(_Model):
+class CardDate(ContractModel):
     what: str = Field(max_length=120)
     date: dt.date
 
 
-class CardNumber(_Model):
+class CardNumber(ContractModel):
     what: str = Field(max_length=120)
     value: float
     unit: str = Field(max_length=20)
     quote: str = Field(max_length=500)
 
 
-class CardCause(_Model):
+class CardCause(ContractModel):
     text: str = Field(max_length=400)
     cites: Cites
 
 
-class CardFactor(_Model):
+class CardFactor(ContractModel):
     id: Slug
     direction: FactorDirection
     magnitude: Magnitude
     quote: str = Field(max_length=500)
 
 
-class CardSector(_Model):
+class CardSector(ContractModel):
     id: Slug
     role: SectorRole
 
 
-class EventCard(_Model):
-    summary: str = Field(max_length=600)
+class EventCard(ContractModel):
+    summary: str = Field(min_length=1, max_length=600)
     facts: list[CardFact] = Field(max_length=10)
     claims: list[CardClaim] = Field(max_length=10)
     actors: list[Annotated[str, Field(max_length=120)]] = Field(max_length=15)
@@ -79,11 +76,11 @@ class EventCard(_Model):
     certainty: Certainty
 
 
-class Event(_Model):
+class Event(ContractModel):
     id: int
-    title: str = Field(max_length=300)
-    first_seen_at: dt.datetime
-    last_item_at: dt.datetime
+    title: str = Field(min_length=1, max_length=300)
+    first_seen_at: AwareDatetime
+    last_item_at: AwareDatetime
     source_count: int = Field(ge=1)
     has_official: bool
     factors: list[Slug]
@@ -93,7 +90,7 @@ class Event(_Model):
     card_status: CardStatus
 
 
-class NewsFilterResult(_Model):
+class NewsFilterResult(ContractModel):
     raw_item_id: int
     business: bool
     reason: str = Field(max_length=200)
