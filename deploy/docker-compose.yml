@@ -1,0 +1,63 @@
+name: orientir
+
+# Образ orientir собирает только api: параллельная сборка одного тега тремя сервисами падает
+# («image already exists»). migrate и worker берут готовый образ.
+x-app: &app
+  image: orientir
+  env_file: .env
+  restart: unless-stopped
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-orientir}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orientir}
+      POSTGRES_DB: ${POSTGRES_DB:-orientir}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      # -h 127.0.0.1: при первом запуске на пустом томе Postgres сначала поднимается временно, только
+      # на unix-сокете; проверка по сокету проходит раньше, чем открыт TCP, и migrate получает
+      # «connection refused». По TCP БД считается здоровой только после инициализации.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *app
+    pull_policy: never
+    restart: "no"
+    command: ["orientir", "migrate"]
+    depends_on:
+      db: {condition: service_healthy}
+
+  api:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    healthcheck:
+      # в slim-образе нет curl
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *app
+    pull_policy: never
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+volumes:
+  pgdata:
