@@ -1,0 +1,45 @@
+# Каталог факторов: общий язык между новостью, компанией и аналитикой банка.
+# Здесь только id, название и группа. Леммы, ряды (series), каналы и отраслевые списки
+# добавляет роль 2 (DQ-6): добавить id можно своим PR, переименовать или удалить — только вместе.
+- {id: key_rate, name: Ключевая ставка ЦБ, group: денежно-кредитные}
+- {id: inflation, name: Инфляция, group: денежно-кредитные}
+- {id: ofz_yields, name: Доходности ОФЗ, group: денежно-кредитные}
+- {id: credit_availability, name: Доступность кредита, group: денежно-кредитные}
+
+- {id: usd_rub, name: Курс доллара к рублю, group: валюта}
+- {id: eur_rub, name: Курс евро к рублю, group: валюта}
+- {id: cny_rub, name: Курс юаня к рублю, group: валюта}
+- {id: fx_control, name: Валютный контроль, group: валюта}
+
+- {id: oil, name: Нефть, group: сырьё}
+- {id: gas, name: Газ, group: сырьё}
+- {id: coal, name: Уголь, group: сырьё}
+- {id: steel, name: Сталь, group: сырьё}
+- {id: aluminum, name: Алюминий, group: сырьё}
+- {id: copper, name: Медь, group: сырьё}
+- {id: nickel, name: Никель, group: сырьё}
+- {id: gold, name: Золото, group: сырьё}
+- {id: grain, name: Зерно, group: сырьё}
+- {id: fertilizers, name: Удобрения, group: сырьё}
+- {id: timber, name: Лес, group: сырьё}
+
+- {id: consumer_demand, name: Потребительский спрос, group: спрос}
+- {id: investment_demand, name: Инвестиционный спрос, group: спрос}
+- {id: gdp_growth, name: Рост ВВП, group: спрос}
+- {id: mortgage_housing, name: Ипотека и жильё, group: спрос}
+- {id: public_procurement, name: Госзакупки и бюджет, group: спрос}
+
+- {id: wages_labor, name: Зарплаты и рынок труда, group: издержки}
+- {id: energy_tariffs, name: Тарифы ЖКХ и энергии, group: издержки}
+- {id: fuel, name: Топливо, group: издержки}
+- {id: logistics_freight, name: Логистика и фрахт, group: издержки}
+
+- {id: taxes, name: Налоги, group: регулирование}
+- {id: export_duties, name: Экспортные пошлины, group: регулирование}
+- {id: import_duties, name: Импортные пошлины и утильсбор, group: регулирование}
+- {id: labeling, name: Маркировка, group: регулирование}
+- {id: sector_regulation, name: Отраслевое регулирование, group: регулирование}
+
+- {id: sanctions, name: Санкции, group: внешние}
+- {id: cross_border_payments, name: Платежи с зарубежными контрагентами, group: внешние}
+- {id: china_trade, name: Торговля с Китаем, group: внешние}

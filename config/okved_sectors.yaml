@@ -1,0 +1,38 @@
+# Отрасли, к которым сводятся классы ОКВЭД. Здесь только id и название.
+# Сопоставление ОКВЭД → отрасль и смежность отраслей добавляет роль 2 (DQ-2).
+sectors:
+  - {id: agriculture, name: Сельское хозяйство}
+  - {id: food, name: Пищевая промышленность}
+  - {id: coal_mining, name: Добыча угля}
+  - {id: oil_gas, name: Нефть и газ}
+  - {id: metal_ore_mining, name: Добыча металлических руд}
+  - {id: metallurgy, name: Металлургия}
+  - {id: chemicals, name: Химическая промышленность}
+  - {id: fertilizers_prod, name: Производство удобрений}
+  - {id: pharma, name: Фармацевтика}
+  - {id: timber_paper, name: Лесная и бумажная промышленность}
+  - {id: construction_materials, name: Стройматериалы}
+  - {id: machinery, name: Машиностроение}
+  - {id: automotive, name: Автомобилестроение}
+  - {id: electronics_electrical, name: Электроника и электротехника}
+  - {id: light_industry, name: Лёгкая промышленность}
+  - {id: power, name: Электроэнергетика}
+  - {id: utilities, name: Коммунальное хозяйство}
+  - {id: development, name: Девелопмент}
+  - {id: construction, name: Строительство}
+  - {id: auto_trade, name: Торговля автомобилями}
+  - {id: wholesale, name: Оптовая торговля}
+  - {id: retail, name: Розничная торговля}
+  - {id: transport_logistics, name: Транспорт и логистика}
+  - {id: hospitality, name: Гостиницы и общепит}
+  - {id: media, name: Медиа и реклама}
+  - {id: telecom, name: Связь}
+  - {id: it, name: Информационные технологии}
+  - {id: finance, name: Финансы и страхование}
+  - {id: real_estate, name: Операции с недвижимостью}
+  - {id: professional_services, name: Профессиональные услуги}
+  - {id: public_admin, name: Госуправление}
+  - {id: education, name: Образование}
+  - {id: healthcare, name: Здравоохранение}
+  - {id: culture_sport, name: Культура и спорт}
+  - {id: other_services, name: Прочие услуги}
