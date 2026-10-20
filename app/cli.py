@@ -1,7 +1,11 @@
 from pathlib import Path
 from typing import Annotated, NoReturn
 
+import psycopg
 import typer
+
+from app.db import MigrationError, migrate_down, migrate_up
+from app.settings import get_settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Ориентир: данные, сбор, агент, проверки")
 llm_app = typer.Typer(no_args_is_help=True, help="Шлюз моделей")
@@ -17,9 +21,32 @@ def not_implemented(item: str) -> NoReturn:
 
 
 @app.command()
-def migrate() -> None:
-    """Применить миграции."""
-    not_implemented("задача 3")
+def migrate(
+    direction: Annotated[str, typer.Argument(help="up или down")] = "up",
+    steps: Annotated[int | None, typer.Argument(help="Сколько миграций откатить (только для down)")] = None,
+) -> None:
+    """Применить или откатить миграции."""
+    if direction not in ("up", "down"):
+        raise typer.BadParameter("ожидается up или down", param_hint="DIRECTION")
+    if steps is not None and direction == "up":
+        raise typer.BadParameter("число шагов задаётся только для down", param_hint="STEPS")
+
+    settings = get_settings()
+    try:
+        with psycopg.connect(settings.database_url, autocommit=True) as conn:
+            if direction == "up":
+                versions = migrate_up(conn, settings.migrations_dir)
+                label = "Применены миграции"
+            else:
+                versions = migrate_down(conn, settings.migrations_dir, steps or 1)
+                label = "Откатаны миграции"
+    except (MigrationError, psycopg.Error) as exc:
+        typer.echo(f"ошибка: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    if versions:
+        typer.echo(f"{label}: {', '.join(f'{v:04d}' for v in versions)}")
+    else:
+        typer.echo("Схема актуальна" if direction == "up" else "Откатывать нечего")
 
 
 @app.command()
