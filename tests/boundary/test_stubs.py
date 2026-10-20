@@ -1,7 +1,7 @@
 import datetime as dt
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from app.agent import run
 from app.agent.run import run_chat, run_insight
@@ -78,8 +78,10 @@ async def test_counterparties():
 
 
 def test_sector_exposure():
-    found = get_sector_exposure("metallurgy", "steel")
-    assert found is None or isinstance(found, Exposure)
+    found = get_sector_exposure("metallurgy", "export_duties")
+    assert isinstance(found, Exposure)
+    assert (found.factor, found.sign, found.strength) == ("export_duties", -1, 3)
+    assert get_sector_exposure("metallurgy", "no_such_factor") is None
     assert get_sector_exposure("no_such_sector", "steel") is None
 
 
@@ -286,3 +288,44 @@ async def test_search_bank_research_without_factor_has_no_theses():
     tool = build_tools(DEV, 1)["search_bank_research"]
     result = await tool.run(tool.args(query="ставка"))
     assert result.theses == [] and result.chunks
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("get_counterparties", {"direction": "suppliers", "top": 11}),
+        ("get_counterparties", {"direction": "suppliers", "top": 0}),
+        ("get_market_data", {"series": "cbr_key_rate", "days": 366}),
+        ("get_market_data", {"series": "cbr_key_rate", "days": 0}),
+        ("search_news", {"query": "ставка", "days": 91}),
+        ("search_news", {"query": "а" * 201}),
+        ("search_bank_research", {"query": "а" * 201}),
+        ("get_event_sources", {"hint": "а" * 201}),
+        ("get_bank_view", {"factor": "Key Rate"}),
+    ],
+)
+def test_tool_args_reject_out_of_range_values(name, args):
+    with pytest.raises(ValidationError):
+        build_tools(DEV, 1)[name].args.model_validate(args)
+
+
+def test_tool_args_accept_boundary_values():
+    tools = build_tools(DEV, 1)
+    tools["get_counterparties"].args.model_validate({"direction": "suppliers", "top": 10})
+    tools["get_market_data"].args.model_validate({"series": "cbr_key_rate", "days": 365})
+    tools["search_news"].args.model_validate({"query": "а" * 200, "days": 90})
+
+
+@pytest.mark.parametrize("name", sorted(VALID_ARGS))
+def test_tool_args_reject_company_id(name):
+    with pytest.raises(ValidationError):
+        build_tools(DEV, 1)[name].args.model_validate({**VALID_ARGS[name], "company_id": "C-IT-01"})
+
+
+def test_submit_insight_args_reject_company_id():
+    tool = build_tools(DEV, 1)["submit_insight"]
+    raw = (get_settings().fixtures_dir / "insight.json").read_bytes()
+    draft = TypeAdapter(InsightResult).validate_json(raw).insight.model_dump(mode="json")
+    tool.args.model_validate({"draft": draft})
+    with pytest.raises(ValidationError):
+        tool.args.model_validate({"draft": draft, "company_id": "C-IT-01"})
