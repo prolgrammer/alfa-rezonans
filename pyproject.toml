@@ -43,3 +43,6 @@ select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
+
+[tool.ruff.format]
+line-ending = "lf"
