@@ -74,3 +74,10 @@ def test_error_responses_use_error_body(status):
     assert "HTTPValidationError" not in text
     feed = api_app.openapi()["paths"]["/api/feed"]["get"]["responses"]
     assert feed[status]["content"]["application/json"]["schema"]["$ref"].endswith("/ErrorBody")
+
+
+def test_generated_response_types_have_defaulted_fields_required():
+    schemas = api_app.openapi()["components"]["schemas"]
+    assert {"tokens_in", "tokens_out", "cost_rub", "ms", "tool_call"} <= set(schemas["AgentStep"]["required"])
+    # в запросах необязательные поля остаются необязательными
+    assert schemas["ChatRequest"]["required"] == ["question"]

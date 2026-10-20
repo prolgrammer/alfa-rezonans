@@ -91,5 +91,5 @@ def sse_docs(models: tuple[type[BaseModel], ...], description: str) -> dict[int 
 def sse_component_schemas() -> dict[str, Any]:
     """Схемы данных кадров: на них в потоке никто не ссылается через модели ответов, а типы фронту нужны."""
     models = {*INSIGHT_STREAM_MODELS, *CHAT_STREAM_MODELS}
-    _, defs = models_json_schema([(m, "validation") for m in models], ref_template=_REF)
+    _, defs = models_json_schema([(m, "serialization") for m in models], ref_template=_REF)
     return defs["$defs"]

@@ -199,3 +199,10 @@ def test_feature_key_accepts_tz_spelling():
     for key in ("Products.LOA", "products.", "1x"):
         with pytest.raises(ValidationError):
             Feature(key=key, value=1, source="user", detail=None)
+
+
+def test_defaulted_fields_are_required_in_serialization_schema():
+    required = set(contracts.AgentStep.model_json_schema(mode="serialization")["required"])
+    assert {"tokens_in", "tokens_out", "cost_rub", "ms", "tool_call"} <= required
+    filters = contracts.FeedFilters.model_json_schema(mode="serialization")
+    assert {"impact", "factor"} <= set(filters["required"])

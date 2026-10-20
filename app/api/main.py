@@ -65,8 +65,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="Ориентир API",
         version="0.1.0",
         description=DESCRIPTION,
-        # одно имя схемы на модель: фронт получает AgentStep, а не AgentStep-Input/-Output
-        separate_input_output_schemas=False,
     )
     app.state.settings = settings
     backend: Backend = MockBackend() if settings.mock else LiveBackend()

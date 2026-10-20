@@ -90,7 +90,12 @@
           "title",
           "input",
           "output",
-          "model"
+          "model",
+          "tokens_in",
+          "tokens_out",
+          "cost_rub",
+          "ms",
+          "tool_call"
         ],
         "title": "AgentStep",
         "type": "object"
