@@ -1,8 +1,10 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import TypeAdapter
 
+from app.agent import run
 from app.api import mock
 from app.api.errors import ErrorBody
 from app.contracts import AgentStep, ChatAnswer, InsightResult
@@ -76,11 +78,11 @@ def test_chat_question_length_is_validated(client):
 
 
 def test_generator_failure_becomes_error_frame_then_done(client, monkeypatch):
-    async def broken(ctx, event_id):
+    async def broken(after):
         yield load_fixture("trace.json", TypeAdapter(list[AgentStep]))[0]
         raise RuntimeError("внутренняя причина")
 
-    monkeypatch.setattr(mock, "run_insight", broken)
+    monkeypatch.setattr(mock, "_insight_stream", broken)
     response = client.get("/api/insights/1/stream")
     assert response.status_code == 200
     frames = parse(response.text)
@@ -91,11 +93,42 @@ def test_generator_failure_becomes_error_frame_then_done(client, monkeypatch):
 
 
 def test_domain_error_in_generator_keeps_its_code(client, monkeypatch):
-    async def missing(ctx, event_id):
+    async def missing(after):
         raise LookupError("нет данных")
         yield
 
-    monkeypatch.setattr(mock, "run_insight", missing)
+    monkeypatch.setattr(mock, "_insight_stream", missing)
     frames = parse(client.get("/api/insights/1/stream").text)
     assert [f["event"] for f in frames] == ["error", "done"]
     assert frames[0]["data"]["error"]["code"] == "not_found"
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    """Подсчёт пауз между шагами вместо реального ожидания."""
+    pauses: list[float] = []
+
+    async def fake_sleep(seconds):
+        pauses.append(seconds)
+
+    monkeypatch.setattr(run, "STEP_DELAY_S", (0.5, 0.5))
+    monkeypatch.setattr(mock, "asyncio", SimpleNamespace(sleep=fake_sleep))
+    return pauses
+
+
+def test_full_stream_pauses_before_every_step(client, sleeps):
+    client.get("/api/insights/1/stream")
+    assert sleeps == [0.5] * STEP_COUNT
+
+
+def test_reconnect_does_not_pause_for_frames_already_delivered(client, sleeps):
+    resumed = parse(client.get("/api/insights/1/stream", headers={"Last-Event-ID": "10"}).text)
+    assert [f["id"] for f in resumed] == [11, 12, 13, 14]
+    assert sleeps == [0.5] * (STEP_COUNT - 10)
+
+
+def test_chat_reconnect_does_not_pause_for_frames_already_delivered(client, sleeps):
+    body = {"event_id": 1, "question": "Что именно говорит банк?"}
+    resumed = parse(client.post("/api/chat", json=body, headers={"Last-Event-ID": "2"}).text)
+    assert [f["event"] for f in resumed] == ["step", "answer", "done"]
+    assert sleeps == [0.5]

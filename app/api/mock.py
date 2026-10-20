@@ -1,8 +1,10 @@
+import asyncio
+import random
 from collections.abc import AsyncIterator
 
 from pydantic import JsonValue, TypeAdapter
 
-from app.agent.run import run_chat, run_insight
+from app.agent import run as agent_run
 from app.api.live import LiveBackend
 from app.api.schemas import (
     ChatRequest,
@@ -31,6 +33,7 @@ from app.clients.profile import get_profile
 from app.collect.market import get_market_series
 from app.contracts import (
     AgentStep,
+    ChatAnswer,
     CompanyProfile,
     Event,
     Feature,
@@ -39,6 +42,7 @@ from app.contracts import (
     InsightStatus,
     Period,
     SessionCtx,
+    StepKind,
     ThesisItem,
 )
 from app.fixtures import load_fixture
@@ -56,6 +60,7 @@ _QUALITY = TypeAdapter(Quality)
 _LLM_USAGE = TypeAdapter(LlmUsage)
 _TOOL_CALLS = TypeAdapter(list[ToolCallLog])
 _SOURCES_HEALTH = TypeAdapter(list[SourceHealth])
+_CHAT_ANSWER = TypeAdapter(ChatAnswer)
 
 # Названия вымышлены, как и сами компании фикстур
 _COMPANY_NAMES = {"C-DEV-01": "ООО «Стройинвест» (демо)", "C-IT-01": "ООО «Нордсофт» (демо)"}
@@ -64,6 +69,41 @@ _FACTOR_SERIES = {"key_rate": "cbr_key_rate", "cny_rub": "cbr_cny"}
 # Разбор в фикстуре один: событие 1 для C-DEV-01
 _INSIGHT_OWNER = ("C-DEV-01", 1)
 MARKET_DAYS = 90
+_CHAT_KINDS = (StepKind.plan, StepKind.tool, StepKind.final)
+
+
+async def _paced(
+    items: list[AgentStep | InsightResult | ChatAnswer], after: int
+) -> AsyncIterator[AgentStep | InsightResult | ChatAnswer]:
+    """Кадры, которые клиент уже получил, повторяются сразу; паузу ждут только новые шаги."""
+    for n, item in enumerate(items, start=1):
+        if n > after and isinstance(item, AgentStep):
+            await asyncio.sleep(random.uniform(*agent_run.STEP_DELAY_S))
+        yield item
+
+
+async def _insight_stream(
+    after: int,
+) -> AsyncIterator[AgentStep | InsightResult | ChatAnswer]:
+    items: list[AgentStep | InsightResult | ChatAnswer] = [*load_fixture("trace.json", _TRACE)]
+    items.append(load_fixture("insight.json", _INSIGHT))
+    async for item in _paced(items, after):
+        yield item
+
+
+async def _chat_stream(
+    after: int,
+) -> AsyncIterator[AgentStep | InsightResult | ChatAnswer]:
+    steps = load_fixture("trace.json", _TRACE)
+    items: list[AgentStep | InsightResult | ChatAnswer] = [
+        next(s for s in steps if s.kind == kind).model_copy(update={"seq": seq})
+        for seq, kind in enumerate(_CHAT_KINDS, start=1)
+    ]
+    items.append(load_fixture("chat_answer.json", _CHAT_ANSWER))
+    async for item in _paced(items, after):
+        yield item
+
+
 BANK_PER_FACTOR = 3
 
 
@@ -113,18 +153,18 @@ class MockBackend(LiveBackend):
         # в MOCK разбор не хранится: его номер совпадает с номером события
         return InsightStart(insight_id=event_id, status=status, cached=cached)
 
-    async def stream_insight(self, ctx: SessionCtx, insight_id: int) -> AsyncIterator[SseEvent]:
+    async def stream_insight(self, ctx: SessionCtx, insight_id: int, after: int) -> AsyncIterator[SseEvent]:
         self._event(insight_id)
-        return agent_events(run_insight(ctx, insight_id))
+        return agent_events(_insight_stream(after))
 
     async def trace(self, ctx: SessionCtx, insight_id: int) -> Trace:
         self._event(insight_id)
         return Trace(insight_id=insight_id, steps=load_fixture("trace.json", _TRACE))
 
-    async def chat(self, ctx: SessionCtx, body: ChatRequest) -> AsyncIterator[SseEvent]:
+    async def chat(self, ctx: SessionCtx, body: ChatRequest, after: int) -> AsyncIterator[SseEvent]:
         if body.event_id is not None:
             self._event(body.event_id)
-        return agent_events(run_chat(ctx, body.event_id, [], body.question))
+        return agent_events(_chat_stream(after))
 
     async def check_news(self, ctx: SessionCtx, body: NewsCheck) -> NewsCheckResult:
         # своя новость в MOCK всегда привязывается к событию 1

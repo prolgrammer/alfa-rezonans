@@ -77,13 +77,13 @@ class LiveBackend:
     async def start_insight(self, ctx: SessionCtx, event_id: int) -> InsightStart:
         not_implemented("BE-8")
 
-    async def stream_insight(self, ctx: SessionCtx, insight_id: int) -> AsyncIterator[SseEvent]:
+    async def stream_insight(self, ctx: SessionCtx, insight_id: int, after: int) -> AsyncIterator[SseEvent]:
         not_implemented("BE-8")
 
     async def trace(self, ctx: SessionCtx, insight_id: int) -> Trace:
         not_implemented("BE-8")
 
-    async def chat(self, ctx: SessionCtx, body: ChatRequest) -> AsyncIterator[SseEvent]:
+    async def chat(self, ctx: SessionCtx, body: ChatRequest, after: int) -> AsyncIterator[SseEvent]:
         # история чата хранится в БД (BE-8), пока вопрос идёт без неё
         return agent_events(run_chat(ctx, body.event_id, [], body.question))
 

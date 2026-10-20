@@ -27,8 +27,9 @@ router = APIRouter(
     summary="Ход разбора потоком",
 )
 async def stream_insight(insight_id: int, request: Request, ctx: Session, backend: BackendDep):
-    events = await backend.stream_insight(ctx, insight_id)
-    return sse_response(events, last_event_id(request))
+    last_id = last_event_id(request)
+    events = await backend.stream_insight(ctx, insight_id, last_id or 0)
+    return sse_response(events, last_id)
 
 
 @router.get(
