@@ -1,0 +1,13 @@
+{
+  "day": "2026-10-20",
+  "budget_rub": 480,
+  "spent_rub": 143.6,
+  "ladder_step": 1,
+  "by_task": [
+    {"task": "news_filter", "model": "glm-5.3-flash", "calls": 412, "cost_rub": 9.8, "fallbacks": 3, "errors": 1, "p50_ms": 640},
+    {"task": "event_card", "model": "deepseek-v4.1-flash", "calls": 96, "cost_rub": 31.2, "fallbacks": 5, "errors": 2, "p50_ms": 4200},
+    {"task": "insight_plan", "model": "qwen3.6-35b", "calls": 38, "cost_rub": 24.7, "fallbacks": 0, "errors": 0, "p50_ms": 5100},
+    {"task": "insight_draft", "model": "qwen3.6-35b", "calls": 38, "cost_rub": 61.4, "fallbacks": 2, "errors": 1, "p50_ms": 9800},
+    {"task": "insight_critic", "model": "deepseek-v4.1-flash", "calls": 38, "cost_rub": 16.5, "fallbacks": 0, "errors": 0, "p50_ms": 3900}
+  ]
+}

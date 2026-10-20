@@ -1,0 +1,17 @@
+{
+  "approaches": [
+    {
+      "name": "Правила без модели",
+      "metrics": {"ndcg_at_5": 0.58, "grounded_share": 1.0, "useful_share": 0.41, "cost_rub": 0.0}
+    },
+    {
+      "name": "Одна модель без проверок",
+      "metrics": {"ndcg_at_5": 0.71, "grounded_share": 0.74, "useful_share": 0.63, "cost_rub": 1.9}
+    },
+    {
+      "name": "Агент с проверками",
+      "metrics": {"ndcg_at_5": 0.79, "grounded_share": 0.97, "useful_share": 0.72, "cost_rub": 3.4}
+    }
+  ],
+  "current": {"useful_share": 0.7, "removed_by_checks": 0.12, "critic_score": 4.1}
+}

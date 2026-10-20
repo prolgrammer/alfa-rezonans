@@ -3,6 +3,7 @@ import re
 import pytest
 from pydantic import TypeAdapter
 
+from app.api.schemas import LlmUsage, Quality, ReviewQueueItem, SourceHealth, ToolCallLog
 from app.catalogs import factor_ids, sector_ids
 from app.contracts import (
     AgentStep,
@@ -44,6 +45,11 @@ REGISTRY: dict[str, TypeAdapter] = {
     "insight.json": TypeAdapter(InsightResult),
     "trace.json": TypeAdapter(list[AgentStep]),
     "chat_answer.json": TypeAdapter(ChatAnswer),
+    "llm_usage.json": TypeAdapter(LlmUsage),
+    "quality.json": TypeAdapter(Quality),
+    "tool_calls.json": TypeAdapter(list[ToolCallLog]),
+    "sources_health.json": TypeAdapter(list[SourceHealth]),
+    "review_queue.json": TypeAdapter(list[ReviewQueueItem]),
 }
 
 
