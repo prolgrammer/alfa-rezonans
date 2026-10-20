@@ -1,0 +1,190 @@
+{
+  "metallurgy": [
+    {
+      "factor": "steel",
+      "sign": 1,
+      "strength": 3,
+      "channels": [
+        "выручка растёт вместе с ценой металла"
+      ],
+      "because": [
+        "sector=metallurgy: цена продукции"
+      ]
+    },
+    {
+      "factor": "export_duties",
+      "sign": -1,
+      "strength": 3,
+      "channels": [
+        "пошлина съедает экспортную выручку"
+      ],
+      "because": [
+        "sector=metallurgy: экспорт"
+      ]
+    },
+    {
+      "factor": "cny_rub",
+      "sign": 1,
+      "strength": 2,
+      "channels": [
+        "рост курса увеличивает рублёвую выручку экспортёра"
+      ],
+      "because": [
+        "sector=metallurgy: экспорт"
+      ]
+    },
+    {
+      "factor": "key_rate",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "стоимость инвестиционных кредитов"
+      ],
+      "because": [
+        "sector=metallurgy: капиталоёмкость"
+      ]
+    }
+  ],
+  "construction_materials": [
+    {
+      "factor": "key_rate",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "спрос стройки падает при дорогой ипотеке"
+      ],
+      "because": [
+        "sector=construction_materials"
+      ]
+    },
+    {
+      "factor": "steel",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "металл — часть себестоимости изделий"
+      ],
+      "because": [
+        "sector=construction_materials: сырьё"
+      ]
+    },
+    {
+      "factor": "energy_tariffs",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "энергоёмкое производство"
+      ],
+      "because": [
+        "sector=construction_materials"
+      ]
+    }
+  ],
+  "machinery": [
+    {
+      "factor": "steel",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "металл — основной материал"
+      ],
+      "because": [
+        "sector=machinery: сырьё"
+      ]
+    },
+    {
+      "factor": "key_rate",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "лизинг и покупка оборудования дорожают"
+      ],
+      "because": [
+        "sector=machinery: спрос"
+      ]
+    },
+    {
+      "factor": "import_duties",
+      "sign": 1,
+      "strength": 1,
+      "channels": [
+        "защита от импортных аналогов"
+      ],
+      "because": [
+        "sector=machinery"
+      ]
+    }
+  ],
+  "electronics_electrical": [
+    {
+      "factor": "cny_rub",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "комплектующие закупаются в Китае"
+      ],
+      "because": [
+        "sector=electronics_electrical: импорт"
+      ]
+    },
+    {
+      "factor": "import_duties",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "пошлины на комплектующие"
+      ],
+      "because": [
+        "sector=electronics_electrical: импорт"
+      ]
+    }
+  ],
+  "finance": [
+    {
+      "factor": "key_rate",
+      "sign": 1,
+      "strength": 2,
+      "channels": [
+        "маржа по кредитам при высокой ставке"
+      ],
+      "because": [
+        "sector=finance"
+      ]
+    },
+    {
+      "factor": "credit_availability",
+      "sign": 1,
+      "strength": 1,
+      "channels": [
+        "спрос на кредиты и гарантии"
+      ],
+      "because": [
+        "sector=finance"
+      ]
+    }
+  ],
+  "real_estate": [
+    {
+      "factor": "mortgage_housing",
+      "sign": -1,
+      "strength": 3,
+      "channels": [
+        "спрос на сделки зависит от ипотеки"
+      ],
+      "because": [
+        "sector=real_estate"
+      ]
+    },
+    {
+      "factor": "key_rate",
+      "sign": -1,
+      "strength": 2,
+      "channels": [
+        "дорогие кредиты сдерживают покупки"
+      ],
+      "because": [
+        "sector=real_estate"
+      ]
+    }
+  ]
+}

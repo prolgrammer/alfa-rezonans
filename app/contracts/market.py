@@ -21,6 +21,7 @@ class MarketSeries(_Model):
     source: str = Field(max_length=60)
     points: list[MarketPoint]
     value: float | None
+    # изменения — разность в единицах ряда (п. п. для ставки, ₽ для курса), не проценты
     change_day: float | None
     change_week: float | None
     change_month: float | None

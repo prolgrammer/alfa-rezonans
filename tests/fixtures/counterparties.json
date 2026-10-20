@@ -1,0 +1,127 @@
+{
+  "C-DEV-01": {
+    "suppliers": [
+      {
+        "sector": "construction_materials",
+        "share": 0.34,
+        "count": 12,
+        "regions": [
+          "Москва",
+          "Московская область",
+          "Тульская область"
+        ]
+      },
+      {
+        "sector": "metallurgy",
+        "share": 0.17,
+        "count": 4,
+        "regions": [
+          "Липецкая область",
+          "Челябинская область"
+        ]
+      },
+      {
+        "sector": "machinery",
+        "share": 0.09,
+        "count": 5,
+        "regions": [
+          "Москва",
+          "Санкт-Петербург"
+        ]
+      },
+      {
+        "sector": "transport_logistics",
+        "share": 0.07,
+        "count": 6,
+        "regions": [
+          "Московская область"
+        ]
+      }
+    ],
+    "customers": [
+      {
+        "sector": "real_estate",
+        "share": 0.41,
+        "count": 9,
+        "regions": [
+          "Москва",
+          "Московская область"
+        ]
+      },
+      {
+        "sector": "finance",
+        "share": 0.22,
+        "count": 3,
+        "regions": [
+          "Москва"
+        ]
+      },
+      {
+        "sector": "public_admin",
+        "share": 0.08,
+        "count": 2,
+        "regions": [
+          "Москва"
+        ]
+      }
+    ]
+  },
+  "C-IT-01": {
+    "suppliers": [
+      {
+        "sector": "electronics_electrical",
+        "share": 0.3,
+        "count": 7,
+        "regions": [
+          "Москва",
+          "Санкт-Петербург"
+        ]
+      },
+      {
+        "sector": "telecom",
+        "share": 0.15,
+        "count": 3,
+        "regions": [
+          "Санкт-Петербург"
+        ]
+      },
+      {
+        "sector": "professional_services",
+        "share": 0.11,
+        "count": 8,
+        "regions": [
+          "Санкт-Петербург",
+          "Москва"
+        ]
+      }
+    ],
+    "customers": [
+      {
+        "sector": "finance",
+        "share": 0.28,
+        "count": 10,
+        "regions": [
+          "Москва",
+          "Санкт-Петербург"
+        ]
+      },
+      {
+        "sector": "retail",
+        "share": 0.2,
+        "count": 6,
+        "regions": [
+          "Москва",
+          "Краснодарский край"
+        ]
+      },
+      {
+        "sector": "public_admin",
+        "share": 0.15,
+        "count": 4,
+        "regions": [
+          "Санкт-Петербург"
+        ]
+      }
+    ]
+  }
+}

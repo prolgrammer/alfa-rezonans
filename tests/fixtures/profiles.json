@@ -1,0 +1,365 @@
+[
+  {
+    "company_id": "C-DEV-01",
+    "version": 1,
+    "hash": "a1f3c0de5b7e49d2",
+    "completeness": 0.86,
+    "features": [
+      {
+        "key": "sector",
+        "value": "development",
+        "source": "calc:okved_sector",
+        "detail": "ОКВЭД 41.10 → девелопмент"
+      },
+      {
+        "key": "sector_name",
+        "value": "Девелопмент",
+        "source": "calc:okved_sector",
+        "detail": null
+      },
+      {
+        "key": "okved",
+        "value": "41.10",
+        "source": "csv:MAINOKVED_CODE",
+        "detail": null
+      },
+      {
+        "key": "revenue_rub",
+        "value": 42000000000,
+        "source": "csv:REVENUE_COMPANY",
+        "detail": null
+      },
+      {
+        "key": "scale",
+        "value": "15–50 млрд",
+        "source": "calc:scale",
+        "detail": "выручка от 15 до 50 млрд ₽"
+      },
+      {
+        "key": "workers",
+        "value": 1800,
+        "source": "calc:workers",
+        "detail": "большая из градаций ФНС и СПАРК"
+      },
+      {
+        "key": "products.loa",
+        "value": true,
+        "source": "csv:CL_PRODUCT_LOA_MARK",
+        "detail": null
+      },
+      {
+        "key": "products.gar",
+        "value": true,
+        "source": "csv:CL_PRODUCT_GAR_MARK",
+        "detail": null
+      },
+      {
+        "key": "products.dep",
+        "value": false,
+        "source": "csv:CL_PRODUCT_DEP_MARK",
+        "detail": null
+      },
+      {
+        "key": "products.lea",
+        "value": false,
+        "source": "csv:CL_PRODUCT_LEA_MARK",
+        "detail": null
+      },
+      {
+        "key": "foreign_trade",
+        "value": false,
+        "source": "csv:FTS_FLAG",
+        "detail": null
+      },
+      {
+        "key": "home_region",
+        "value": "Москва",
+        "source": "csv:REGION",
+        "detail": null
+      },
+      {
+        "key": "client_type",
+        "value": "действующий клиент",
+        "source": "csv:CL_TYPE",
+        "detail": null
+      },
+      {
+        "key": "suppliers.construction_materials",
+        "value": 0.34,
+        "source": "calc:suppliers",
+        "detail": "доля отрасли среди поставщиков"
+      },
+      {
+        "key": "suppliers.metallurgy",
+        "value": 0.17,
+        "source": "calc:suppliers",
+        "detail": "доля отрасли среди поставщиков"
+      },
+      {
+        "key": "market_position.percentile",
+        "value": 0.82,
+        "source": "calc:market_position",
+        "detail": "среди клиентов в данных"
+      }
+    ],
+    "exposures": [
+      {
+        "factor": "key_rate",
+        "sign": -1,
+        "strength": 3,
+        "channels": [
+          "стоимость кредитов",
+          "спрос на ипотеку"
+        ],
+        "because": [
+          "products.loa",
+          "sector=development"
+        ]
+      },
+      {
+        "factor": "mortgage_housing",
+        "sign": -1,
+        "strength": 3,
+        "channels": [
+          "спрос на жильё в ипотеку"
+        ],
+        "because": [
+          "sector=development"
+        ]
+      },
+      {
+        "factor": "credit_availability",
+        "sign": -1,
+        "strength": 2,
+        "channels": [
+          "стоимость проектного финансирования"
+        ],
+        "because": [
+          "products.loa"
+        ]
+      },
+      {
+        "factor": "inflation",
+        "sign": -1,
+        "strength": 2,
+        "channels": [
+          "рост стоимости строительства"
+        ],
+        "because": [
+          "suppliers.construction_materials=0.34"
+        ]
+      },
+      {
+        "factor": "steel",
+        "sign": -1,
+        "strength": 2,
+        "channels": [
+          "издержки: арматура и металлопрокат"
+        ],
+        "because": [
+          "suppliers.metallurgy=0.17"
+        ]
+      },
+      {
+        "factor": "export_duties",
+        "sign": 1,
+        "strength": 1,
+        "channels": [
+          "удешевление металла внутри страны"
+        ],
+        "because": [
+          "suppliers.metallurgy=0.17"
+        ]
+      },
+      {
+        "factor": "public_procurement",
+        "sign": 1,
+        "strength": 1,
+        "channels": [
+          "госконтракты и банковские гарантии"
+        ],
+        "because": [
+          "products.gar"
+        ]
+      },
+      {
+        "factor": "cny_rub",
+        "sign": 0,
+        "strength": 1,
+        "channels": [
+          "зависит от доли импортных материалов"
+        ],
+        "because": []
+      }
+    ],
+    "computed_at": "2026-10-19T06:00:00+03:00"
+  },
+  {
+    "company_id": "C-IT-01",
+    "version": 1,
+    "hash": "7be2d94c1a60f358",
+    "completeness": 0.78,
+    "features": [
+      {
+        "key": "sector",
+        "value": "it",
+        "source": "calc:okved_sector",
+        "detail": "ОКВЭД 62.01 → информационные технологии"
+      },
+      {
+        "key": "sector_name",
+        "value": "Информационные технологии",
+        "source": "calc:okved_sector",
+        "detail": null
+      },
+      {
+        "key": "okved",
+        "value": "62.01",
+        "source": "csv:MAINOKVED_CODE",
+        "detail": null
+      },
+      {
+        "key": "revenue_rub",
+        "value": 18000000000,
+        "source": "csv:REVENUE_COMPANY",
+        "detail": null
+      },
+      {
+        "key": "scale",
+        "value": "15–50 млрд",
+        "source": "calc:scale",
+        "detail": "выручка от 15 до 50 млрд ₽"
+      },
+      {
+        "key": "workers",
+        "value": 950,
+        "source": "calc:workers",
+        "detail": "большая из градаций ФНС и СПАРК"
+      },
+      {
+        "key": "products.dep",
+        "value": true,
+        "source": "csv:CL_PRODUCT_DEP_MARK",
+        "detail": null
+      },
+      {
+        "key": "products.loa",
+        "value": false,
+        "source": "csv:CL_PRODUCT_LOA_MARK",
+        "detail": null
+      },
+      {
+        "key": "products.zpp",
+        "value": true,
+        "source": "csv:CL_PRODUCT_ZPP_MARK",
+        "detail": null
+      },
+      {
+        "key": "foreign_trade",
+        "value": true,
+        "source": "csv:FTS_FLAG",
+        "detail": null
+      },
+      {
+        "key": "fts_country",
+        "value": "Китай",
+        "source": "csv:FTS_COUNTRY_NAME",
+        "detail": "страна внешнеторговых операций"
+      },
+      {
+        "key": "home_region",
+        "value": "Санкт-Петербург",
+        "source": "csv:REGION",
+        "detail": null
+      },
+      {
+        "key": "client_type",
+        "value": "действующий клиент",
+        "source": "csv:CL_TYPE",
+        "detail": null
+      },
+      {
+        "key": "customers.finance",
+        "value": 0.28,
+        "source": "calc:customers",
+        "detail": "доля отрасли среди покупателей"
+      },
+      {
+        "key": "market_position.percentile",
+        "value": 0.64,
+        "source": "calc:market_position",
+        "detail": "среди клиентов в данных"
+      }
+    ],
+    "exposures": [
+      {
+        "factor": "key_rate",
+        "sign": 1,
+        "strength": 2,
+        "channels": [
+          "доход на свободные деньги"
+        ],
+        "because": [
+          "products.dep"
+        ]
+      },
+      {
+        "factor": "wages_labor",
+        "sign": -1,
+        "strength": 2,
+        "channels": [
+          "фонд оплаты труда ИТ-специалистов"
+        ],
+        "because": [
+          "workers",
+          "sector=it"
+        ]
+      },
+      {
+        "factor": "taxes",
+        "sign": -1,
+        "strength": 2,
+        "channels": [
+          "налоговые льготы для ИТ"
+        ],
+        "because": [
+          "sector=it"
+        ]
+      },
+      {
+        "factor": "investment_demand",
+        "sign": 1,
+        "strength": 2,
+        "channels": [
+          "заказы на разработку и внедрение"
+        ],
+        "because": [
+          "customers.finance=0.28"
+        ]
+      },
+      {
+        "factor": "cny_rub",
+        "sign": 0,
+        "strength": 1,
+        "channels": [
+          "зависит от закупок оборудования в Китае"
+        ],
+        "because": [
+          "foreign_trade"
+        ]
+      },
+      {
+        "factor": "import_duties",
+        "sign": -1,
+        "strength": 1,
+        "channels": [
+          "стоимость ввозимого оборудования"
+        ],
+        "because": [
+          "foreign_trade"
+        ]
+      }
+    ],
+    "computed_at": "2026-10-19T06:00:00+03:00"
+  }
+]

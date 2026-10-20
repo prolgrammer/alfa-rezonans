@@ -1,0 +1,199 @@
+{
+  "C-DEV-01": [
+    {
+      "event_id": 1,
+      "title": "Банк России сохранил ключевую ставку на уровне 14,0%",
+      "headline": "Деньги остаются дорогими: проценты по вашим кредитам и спрос на ипотеку в ближайшие месяцы не улучшатся",
+      "impact": {
+        "direction": "risk",
+        "strength": "high",
+        "horizon": "months"
+      },
+      "why": [
+        {
+          "term": "exposure",
+          "text": "Есть кредиты: ставка влияет на расходы по долгу",
+          "feature_keys": [
+            "products.loa"
+          ]
+        },
+        {
+          "term": "sector",
+          "text": "Девелопмент: спрос зависит от ипотеки",
+          "feature_keys": [
+            "sector"
+          ]
+        },
+        {
+          "term": "bank",
+          "text": "Банк ждал снижения, а ЦБ сделал паузу",
+          "feature_keys": []
+        }
+      ],
+      "bank_line": "Банк: ставка без изменения на 14,0%, риторика стала жёстче, 12.09",
+      "bank_line_date": "2026-09-12",
+      "main_factor": "key_rate",
+      "factors": [
+        "key_rate",
+        "inflation",
+        "mortgage_housing"
+      ],
+      "source_count": 3,
+      "has_official": true,
+      "last_item_at": "2026-09-12T10:15:00+03:00",
+      "important_for_all": true,
+      "insight_id": 1,
+      "score": 0.91
+    },
+    {
+      "event_id": 3,
+      "title": "Правительство предложило повысить экспортные пошлины на металлы",
+      "headline": null,
+      "impact": {
+        "direction": "opportunity",
+        "strength": "low",
+        "horizon": "months"
+      },
+      "why": [
+        {
+          "term": "counterparties",
+          "text": "17% поставщиков — металлурги: металл может подешеветь",
+          "feature_keys": [
+            "suppliers.metallurgy"
+          ]
+        },
+        {
+          "term": "sector",
+          "text": "Строительство получает дешёвый металл",
+          "feature_keys": [
+            "sector"
+          ]
+        }
+      ],
+      "bank_line": "Банк: цены на прокат стабильны, пошлины возможны в IV квартале, 25.09",
+      "bank_line_date": "2026-09-25",
+      "main_factor": "export_duties",
+      "factors": [
+        "export_duties",
+        "steel"
+      ],
+      "source_count": 3,
+      "has_official": false,
+      "last_item_at": "2026-10-17T11:00:00+03:00",
+      "important_for_all": false,
+      "insight_id": null,
+      "score": 0.52
+    },
+    {
+      "event_id": 2,
+      "title": "Юань подорожал до 11,92 ₽ — максимума за три месяца",
+      "headline": null,
+      "impact": {
+        "direction": "neutral",
+        "strength": "low",
+        "horizon": "weeks"
+      },
+      "why": [
+        {
+          "term": "exposure",
+          "text": "Доля импортных материалов неизвестна — влияние неясно",
+          "feature_keys": [
+            "suppliers.construction_materials"
+          ]
+        }
+      ],
+      "bank_line": null,
+      "bank_line_date": null,
+      "main_factor": "cny_rub",
+      "factors": [
+        "cny_rub",
+        "china_trade"
+      ],
+      "source_count": 2,
+      "has_official": false,
+      "last_item_at": "2026-10-16T09:20:00+03:00",
+      "important_for_all": false,
+      "insight_id": null,
+      "score": 0.31
+    }
+  ],
+  "C-IT-01": [
+    {
+      "event_id": 1,
+      "title": "Банк России сохранил ключевую ставку на уровне 14,0%",
+      "headline": null,
+      "impact": {
+        "direction": "opportunity",
+        "strength": "medium",
+        "horizon": "months"
+      },
+      "why": [
+        {
+          "term": "exposure",
+          "text": "Есть депозиты: высокая ставка повышает доход",
+          "feature_keys": [
+            "products.dep"
+          ]
+        },
+        {
+          "term": "bank",
+          "text": "Банк ждал снижения, а ЦБ сделал паузу",
+          "feature_keys": []
+        }
+      ],
+      "bank_line": "Банк: ставка без изменения на 14,0%, риторика стала жёстче, 12.09",
+      "bank_line_date": "2026-09-12",
+      "main_factor": "key_rate",
+      "factors": [
+        "key_rate",
+        "inflation",
+        "mortgage_housing"
+      ],
+      "source_count": 3,
+      "has_official": true,
+      "last_item_at": "2026-09-12T10:15:00+03:00",
+      "important_for_all": true,
+      "insight_id": null,
+      "score": 0.78
+    },
+    {
+      "event_id": 2,
+      "title": "Юань подорожал до 11,92 ₽ — максимума за три месяца",
+      "headline": null,
+      "impact": {
+        "direction": "mixed",
+        "strength": "medium",
+        "horizon": "weeks"
+      },
+      "why": [
+        {
+          "term": "exposure",
+          "text": "Закупки оборудования в Китае дорожают с курсом юаня",
+          "feature_keys": [
+            "foreign_trade"
+          ]
+        },
+        {
+          "term": "region",
+          "text": "Внешнеторговые операции — с Китаем",
+          "feature_keys": [
+            "fts_country"
+          ]
+        }
+      ],
+      "bank_line": null,
+      "bank_line_date": null,
+      "main_factor": "cny_rub",
+      "factors": [
+        "cny_rub",
+        "china_trade"
+      ],
+      "source_count": 2,
+      "has_official": false,
+      "last_item_at": "2026-10-16T09:20:00+03:00",
+      "important_for_all": false,
+      "insight_id": null,
+      "score": 0.47
+    }
+  ]
+}
