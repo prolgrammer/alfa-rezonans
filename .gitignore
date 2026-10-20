@@ -21,3 +21,7 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+
+# Данные организаторов — только локально
+data/*
+!data/README.md

@@ -1,0 +1,45 @@
+[project]
+name = "orientir"
+version = "0.1.0"
+description = "Ориентир — объяснение корпоративному клиенту банка, как новость влияет на его компанию"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "typer>=0.15",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "jinja2>=3.1",
+]
+
+[project.scripts]
+orientir = "app.cli:app"
+
+[dependency-groups]
+dev = ["ruff>=0.8", "pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
