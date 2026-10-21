@@ -1,16 +1,204 @@
-from collections.abc import Mapping
-from typing import Any
+import asyncio
+import contextlib
+import contextvars
+import hashlib
+import json
+import logging
+import time
+import uuid
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from app.llm.errors import LLMUnavailable
+from app.db import get_pool
+from app.llm.budget import Budget
+from app.llm.config import ALLOWED_MODELS, ModelCfg, ModelsConfig, TaskCfg, load_caps, load_config
+from app.llm.errors import AllModelsFailed, BudgetExceeded, LLMNotConfigured, LLMUnavailable
+from app.llm.jsonmode import (
+    DOWNGRADE,
+    JsonMode,
+    drop_optional_nulls,
+    parse_json,
+    schema_instruction,
+    strict_schema,
+)
+from app.llm.prompts import Prompts
+from app.llm.provider import BadRequest, ChatResult, Provider, ProviderError, estimate_tokens
+from app.llm.store import CallRow, MemoryStore, PgStore, Store
 from app.llm.types import Lane, ToolCallRequest, ToolSpec, ToolStepResult
+from app.settings import REPO_ROOT, Settings, get_settings
 
-__all__ = ["Lane", "LLMUnavailable", "ToolCallRequest", "ToolSpec", "ToolStepResult", "Gateway", "gw"]
+__all__ = [
+    "AllModelsFailed",
+    "Breaker",
+    "BudgetExceeded",
+    "Gateway",
+    "LLMNotConfigured",
+    "LLMUnavailable",
+    "Lane",
+    "Scope",
+    "ScopeCall",
+    "ToolCallRequest",
+    "ToolSpec",
+    "ToolStepResult",
+    "gw",
+    "llm_scope",
+]
+
+log = logging.getLogger(__name__)
+
+# Общий дедлайн вызова на всю цепочку моделей: разбор по клику укладывается в 45 с (ML-13).
+LANE_DEADLINE_S: dict[Lane, float] = {"background": 180.0, "interactive": 40.0}
+MIN_WINDOW_S = 3.0
+VALIDATION_ATTEMPTS = 2
+ERROR_LIMIT = 500
+# Сколько токенов занимает картинка в оценке резерва: точное число зависит от модели и размера.
+IMAGE_TOKENS = 2000
+STORE_INIT_TIMEOUT_S = 5.0
+
+
+class Breaker:
+    def __init__(
+        self, threshold: int = 5, cooldown_s: float = 60.0, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self.threshold = threshold
+        self.cooldown_s = cooldown_s
+        self._clock = clock
+        self._failures: dict[str, int] = {}
+        self._open_until: dict[str, float] = {}
+
+    def state(self, model: str) -> Literal["closed", "open", "half_open"]:
+        if self._failures.get(model, 0) < self.threshold:
+            return "closed"
+        return "open" if self._clock() < self._open_until[model] else "half_open"
+
+    def allows(self, model: str) -> bool:
+        return self.state(model) != "open"
+
+    def failure(self, model: str) -> None:
+        self._failures[model] = self._failures.get(model, 0) + 1
+        if self._failures[model] >= self.threshold:
+            # неудачный пробный запрос в half_open снова размыкает предохранитель на полную паузу
+            self._open_until[model] = self._clock() + self.cooldown_s
+
+    def success(self, model: str) -> None:
+        self._failures.pop(model, None)
+        self._open_until.pop(model, None)
+
+
+@dataclass
+class ScopeCall:
+    task: str
+    model: str
+    ms: int
+    cost_rub: float
+    cached: bool
+    fallback_from: str | None
+
+
+@dataclass
+class Scope:
+    trace_id: str
+    event_id: int | None = None
+    cost_rub: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    calls: list[ScopeCall] = field(default_factory=list)
+
+
+_scope: contextvars.ContextVar[Scope | None] = contextvars.ContextVar("llm_scope", default=None)
+
+
+@contextlib.contextmanager
+def llm_scope(*, trace_id: str | None = None, event_id: int | None = None) -> Iterator[Scope]:
+    scope = Scope(trace_id=trace_id or uuid.uuid4().hex[:16], event_id=event_id)
+    token = _scope.set(scope)
+    try:
+        yield scope
+    finally:
+        _scope.reset(token)
+
+
+class _Failed(Exception):
+    """Модель не дала валидного ответа; текст уже замаскирован."""
+
+
+@dataclass
+class _Usage:
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+
+@dataclass
+class _Request:
+    task: str
+    cfg: TaskCfg
+    lane: Lane
+    messages: list[dict[str, Any]]
+    schema: type[BaseModel]
+    prompt_version: str
+    event_id: int | None
+    trace_id: str
+
+
+def _text_of(message: dict[str, Any]) -> tuple[str, int]:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content, 0
+    if isinstance(content, list):
+        parts = [p for p in content if isinstance(p, dict)]
+        text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+        return text, sum(1 for p in parts if p.get("type") == "image_url")
+    return "", 0
+
+
+def _with_instruction(messages: list[dict[str, Any]], instruction: str) -> list[dict[str, Any]]:
+    first, rest = messages[0], messages[1:]
+    content = first["content"]
+    if isinstance(content, str):
+        content = content + instruction
+    else:
+        content = [
+            {**p, "text": p["text"] + instruction} if p.get("type") == "text" and i == 0 else p
+            for i, p in enumerate(content)
+        ]
+    return [{**first, "content": content}, *rest]
 
 
 class Gateway:
-    # заглушка до ML-1
+    def __init__(
+        self,
+        config: ModelsConfig,
+        *,
+        settings: Settings | None = None,
+        store: Store | None = None,
+        caps: Mapping[str, set[str]] | None = None,
+        prompts_dir: Path | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], datetime] | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self.config = config
+        self._settings = settings
+        self._store = store
+        self._caps = caps
+        self._prompts = Prompts(prompts_dir or REPO_ROOT / "config" / "prompts")
+        self._clock = clock
+        self._now = now
+        self._sleep = sleep
+        self.breaker = Breaker(clock=clock)
+        self._json_mode: dict[str, JsonMode] = {}
+        self._no_reasoning_param: set[str] = set()
+        self._providers: dict[str, Provider] = {}
+        self._budget: Budget | None = None
+        self._init_lock = asyncio.Lock()
+
+    # ---------- публичный API ----------
+
     async def json[M: BaseModel](
         self,
         task: str,
@@ -21,9 +209,11 @@ class Gateway:
         event_id: int | None = None,
         lane: Lane = "background",
     ) -> M:
-        raise LLMUnavailable("шлюз ещё не реализован (ML-1)")
+        cfg = self.config.task(task)
+        text, version = self._prompts.render(prompt, vars)
+        req = self._request(task, cfg, lane, [{"role": "user", "content": text}], schema, version, event_id)
+        return await self._run(req)
 
-    # заглушка до ML-1
     async def tools_step(
         self,
         task: str,
@@ -32,11 +222,316 @@ class Gateway:
         *,
         lane: Lane = "interactive",
     ) -> ToolStepResult:
-        raise LLMUnavailable("шлюз ещё не реализован (ML-1)")
+        raise LLMUnavailable("шаг вызова функций ещё не реализован")
 
-    # заглушка до ML-1
     async def vision[M: BaseModel](self, task: str, prompt: str, image_png: bytes, schema: type[M]) -> M:
-        raise LLMUnavailable("шлюз ещё не реализован (ML-1)")
+        raise LLMUnavailable("чтение картинок ещё не реализовано")
+
+    # ---------- подготовка ----------
+
+    def _request(
+        self,
+        task: str,
+        cfg: TaskCfg,
+        lane: Lane,
+        messages: list[dict[str, Any]],
+        schema: type[BaseModel],
+        version: str,
+        event_id: int | None,
+    ) -> _Request:
+        scope = _scope.get()
+        return _Request(
+            task=task,
+            cfg=cfg,
+            lane=lane,
+            messages=messages,
+            schema=schema,
+            prompt_version=version,
+            event_id=event_id if event_id is not None else (scope.event_id if scope else None),
+            trace_id=scope.trace_id if scope else uuid.uuid4().hex[:16],
+        )
+
+    def _secrets(self) -> tuple[str, str]:
+        settings = self._settings or get_settings()
+        return settings.llm_api_key.get_secret_value(), settings.llm_folder_id.get_secret_value()
+
+    async def _ready(self) -> Budget:
+        if self._budget is not None:
+            return self._budget
+        async with self._init_lock:
+            if self._budget is not None:
+                return self._budget
+            settings = self._settings or get_settings()
+            api_key, folder = self._secrets()
+            for name, provider_cfg in self.config.providers.items():
+                self._providers[name] = Provider(
+                    name,
+                    provider_cfg,
+                    api_key=api_key,
+                    folder=folder,
+                    base_url=settings.llm_base_url or None,
+                    sleep=self._sleep,
+                    clock=self._clock,
+                )
+            if self._caps is None:
+                self._caps = load_caps(REPO_ROOT / ".models_caps.json")
+            if self._store is None:
+                self._store = await self._open_store()
+            kwargs = {"now": self._now} if self._now else {}
+            self._budget = Budget(
+                settings.llm_daily_budget_rub, store=self._store, clock=self._clock, **kwargs
+            )
+            return self._budget
+
+    @staticmethod
+    async def _open_store() -> Store:
+        try:
+            async with asyncio.timeout(STORE_INIT_TIMEOUT_S):
+                return PgStore(await get_pool())
+        except Exception as exc:
+            log.warning("шлюз: БД недоступна (%s), кэш и учёт вызовов только в памяти", type(exc).__name__)
+            return MemoryStore()
+
+    # ---------- цепочка моделей ----------
+
+    def _chain(self, cfg: TaskCfg) -> list[str]:
+        return [m for m in [cfg.model, *cfg.fallback] if m]
+
+    def _best_mode(self, model: str) -> JsonMode:
+        if model not in self._json_mode:
+            caps = self.config.caps(model, self._caps or {})
+            self._json_mode[model] = (
+                "schema" if "json_schema" in caps else "object" if "json_object" in caps else "prompt"
+            )
+        return self._json_mode[model]
+
+    async def _run(self, req: _Request) -> BaseModel:
+        api_key, folder = self._secrets()
+        if not api_key or not folder:
+            raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
+        budget = await self._ready()
+        await budget.sync()
+        chain = self._chain(req.cfg)
+        deadline = self._clock() + LANE_DEADLINE_S[req.lane]
+        errors: list[str] = []
+        for index, model in enumerate(chain):
+            if model not in ALLOWED_MODELS:
+                raise ValueError(f"модель {model!r} не входит в белый список кейса")
+            if deadline - self._clock() < MIN_WINDOW_S:
+                errors.append("истёк дедлайн вызова")
+                break
+            if not self.breaker.allows(model) and index < len(chain) - 1:
+                errors.append(f"{model}: предохранитель разомкнут")
+                continue
+            fallback_from = chain[0] if index else None
+            try:
+                return await self._attempt(req, model, fallback_from, deadline)
+            except _Failed as failed:
+                errors.append(f"{model}: {failed}")
+        raise AllModelsFailed(f"задача {req.task}: ни одна модель не ответила. " + "; ".join(errors))
+
+    def _cache_key(self, req: _Request, mcfg: ModelCfg) -> str:
+        payload = {
+            "uri": mcfg.uri,
+            "messages": req.messages,
+            "schema": req.schema.model_json_schema(),
+            "t": req.cfg.temperature,
+            "max_tokens": req.cfg.max_tokens,
+            "reasoning": req.cfg.reasoning,
+            "prompt_version": req.prompt_version,
+        }
+        return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+    def _reserve_rub(self, req: _Request, mcfg: ModelCfg) -> float:
+        tokens_in = 0
+        for message in req.messages:
+            text, images = _text_of(message)
+            tokens_in += estimate_tokens(text) + images * IMAGE_TOKENS
+        tokens_in += estimate_tokens(json.dumps(req.schema.model_json_schema(), ensure_ascii=False))
+        # у части моделей рассуждения не входят в max_tokens
+        tokens_out = req.cfg.max_tokens * (2 if req.cfg.reasoning else 1)
+        return tokens_in * mcfg.price.in_ / 1000 + tokens_out * mcfg.price.out / 1000
+
+    async def _attempt(
+        self, req: _Request, model: str, fallback_from: str | None, deadline: float
+    ) -> BaseModel:
+        assert self._budget is not None and self._store is not None
+        mcfg = self.config.models[model]
+        provider = self._providers[mcfg.provider]
+        started = self._clock()
+        row = CallRow(
+            task=req.task,
+            model=model,
+            lane=req.lane,
+            prompt_version=req.prompt_version,
+            fallback_from=fallback_from,
+            trace_id=req.trace_id,
+            event_id=req.event_id,
+        )
+        key = self._cache_key(req, mcfg)
+        hit = await self._store.cache_get(key)
+        if hit is not None:
+            try:
+                cached = req.schema.model_validate(hit)
+            except ValidationError:
+                log.info("шлюз: запись кэша не проходит текущую схему, идём к модели (%s)", req.task)
+            else:
+                row.cached = True
+                await self._finish(row, started)
+                return cached
+
+        usage = _Usage()
+        with self._budget.hold(req.task, req.cfg.essential, self._reserve_rub(req, mcfg)):
+            try:
+                result = await self._query(req, model, mcfg, provider, usage, deadline)
+            except _Failed as failed:
+                row.error = str(failed)[:ERROR_LIMIT]
+                self.breaker.failure(model)
+                self._charge(row, mcfg, usage)
+                await self._finish(row, started)
+                raise
+        self.breaker.success(model)
+        self._charge(row, mcfg, usage)
+        await self._store.cache_put(key, req.task, model, result.model_dump(mode="json"))
+        await self._finish(row, started)
+        return result
+
+    def _charge(self, row: CallRow, mcfg: ModelCfg, usage: _Usage) -> None:
+        row.tokens_in, row.tokens_out = usage.tokens_in, usage.tokens_out
+        row.cost_rub = round(
+            usage.tokens_in * mcfg.price.in_ / 1000 + usage.tokens_out * mcfg.price.out / 1000, 4
+        )
+
+    async def _finish(self, row: CallRow, started: float) -> None:
+        assert self._budget is not None and self._store is not None
+        row.ms = int((self._clock() - started) * 1000)
+        self._budget.add(row.cost_rub)
+        scope = _scope.get()
+        if scope is not None:
+            scope.cost_rub += row.cost_rub
+            scope.tokens_in += row.tokens_in
+            scope.tokens_out += row.tokens_out
+            scope.calls.append(
+                ScopeCall(row.task, row.model, row.ms, row.cost_rub, row.cached, row.fallback_from)
+            )
+        await self._store.record(row)
+
+    # ---------- один запрос к модели ----------
+
+    def _body(
+        self, req: _Request, model: str, mcfg: ModelCfg, messages: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        mode = self._best_mode(model)
+        schema = req.schema.model_json_schema()
+        body: dict[str, Any] = {
+            "model": self._providers[mcfg.provider].uri(mcfg.uri),
+            "temperature": req.cfg.temperature,
+            "max_tokens": req.cfg.max_tokens,
+        }
+        if mode == "schema":
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": req.schema.__name__, "schema": strict_schema(schema)},
+            }
+        else:
+            if mode == "object":
+                body["response_format"] = {"type": "json_object"}
+            messages = _with_instruction(messages, schema_instruction(schema))
+        body["messages"] = messages
+        if (
+            not req.cfg.reasoning
+            and mcfg.reasoning_off == "reasoning_effort"
+            and model not in self._no_reasoning_param
+        ):
+            body["reasoning_effort"] = "none"
+        return body
+
+    async def _chat(
+        self,
+        req: _Request,
+        model: str,
+        mcfg: ModelCfg,
+        provider: Provider,
+        messages: list[dict[str, Any]],
+        deadline: float,
+    ) -> ChatResult:
+        while True:
+            body = self._body(req, model, mcfg, messages)
+            try:
+                return await provider.chat(body, deadline=deadline)
+            except BadRequest as exc:
+                reason = str(exc).lower()
+                if "reasoning_effort" in body and "reasoning" in reason:
+                    self._no_reasoning_param.add(model)
+                    log.warning("шлюз: модель %s не принимает reasoning_effort, параметр отключён", model)
+                    continue
+                mode = self._best_mode(model)
+                lower = DOWNGRADE[mode]
+                if lower and any(
+                    w in reason for w in ("response_format", "json_schema", "json_object", "schema", "format")
+                ):
+                    self._json_mode[model] = lower
+                    log.warning("шлюз: модель %s, режим JSON понижен до %s", model, lower)
+                    continue
+                raise
+
+    async def _query(
+        self,
+        req: _Request,
+        model: str,
+        mcfg: ModelCfg,
+        provider: Provider,
+        usage: _Usage,
+        deadline: float,
+    ) -> BaseModel:
+        semaphore = provider.lane(req.lane)
+        wait = max(deadline - self._clock() - MIN_WINDOW_S, 0.001)
+        try:
+            await asyncio.wait_for(semaphore.acquire(), wait)
+        except TimeoutError:
+            raise _Failed("нет свободного слота у провайдера до конца дедлайна") from None
+        try:
+            return await self._query_slot(req, model, mcfg, provider, usage, deadline)
+        finally:
+            semaphore.release()
+
+    async def _query_slot(
+        self,
+        req: _Request,
+        model: str,
+        mcfg: ModelCfg,
+        provider: Provider,
+        usage: _Usage,
+        deadline: float,
+    ) -> BaseModel:
+        schema_json = req.schema.model_json_schema()
+        messages = list(req.messages)
+        for attempt in range(VALIDATION_ATTEMPTS):
+            try:
+                answer = await self._chat(req, model, mcfg, provider, messages, deadline)
+            except ProviderError as exc:
+                raise _Failed(str(exc)) from exc
+            usage.tokens_in += answer.tokens_in
+            usage.tokens_out += answer.tokens_out
+            if "{" not in answer.text:
+                # пустой ответ или отказ текстом: тот же запрос даст то же самое за те же деньги
+                raise _Failed("ответ без JSON")
+            try:
+                data = drop_optional_nulls(parse_json(answer.text), schema_json)
+                return req.schema.model_validate(data)
+            except ValueError as exc:  # JSONDecodeError и ValidationError
+                problem = provider.mask(str(exc))[:ERROR_LIMIT]
+                if attempt == VALIDATION_ATTEMPTS - 1:
+                    raise _Failed(f"ответ не прошёл проверку: {problem}") from exc
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": answer.text},
+                    {
+                        "role": "user",
+                        "content": f"Ответ не прошёл проверку: {problem}\nИсправь и верни только JSON.",
+                    },
+                ]
+        raise AssertionError("недостижимо")
 
 
-gw = Gateway()
+gw = Gateway(load_config(REPO_ROOT / "config" / "models.yaml"))

@@ -155,13 +155,12 @@ def no_delay(monkeypatch):
     monkeypatch.setattr(run, "STEP_DELAY_S", (0, 0))
 
 
-async def test_gateway_is_unavailable():
-    with pytest.raises(LLMUnavailable, match="ML-1"):
-        await gw.json("task", "prompt", {}, InsightResult)
+async def test_gateway_without_key_is_unavailable():
+    # ключ обнулён в tests/conftest.py, поэтому шлюз отказывает до обращения к сети
     with pytest.raises(LLMUnavailable):
-        await gw.tools_step("task", [], [ToolSpec(name="t", description="d", parameters={})])
-    with pytest.raises(LLMUnavailable):
-        await gw.vision("task", "prompt", b"", InsightResult)
+        await gw.tools_step(
+            "chat", [{"role": "user", "content": "x"}], [ToolSpec(name="t", description="d", parameters={})]
+        )
 
 
 async def test_news_filter_passes_everything():

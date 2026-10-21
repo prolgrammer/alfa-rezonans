@@ -5,9 +5,7 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.db import migrate_up
 from app.llm.store import CallRow, MemoryStore, PgStore
-from app.settings import get_settings
 
 
 async def test_memory_store_roundtrip():
@@ -21,15 +19,6 @@ async def test_memory_store_roundtrip():
     assert len(store.rows) == 2
     assert await store.spent_since(datetime.now(UTC) - timedelta(minutes=1)) == 2.0
     assert await store.spent_since(datetime.now(UTC) + timedelta(minutes=1)) == 0.0
-
-
-@pytest.fixture
-async def pg_pool(test_db_url, db_conn):
-    migrate_up(db_conn, get_settings().migrations_dir)
-    pool = AsyncConnectionPool(test_db_url, kwargs={"row_factory": dict_row}, open=False)
-    await pool.open()
-    yield pool
-    await pool.close()
 
 
 async def test_pg_store_writes_calls_and_cache(pg_pool, db_conn):
