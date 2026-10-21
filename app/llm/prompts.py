@@ -28,7 +28,7 @@ class Prompts:
     def __init__(self, directory: Path) -> None:
         self._dir = directory
         self._env = jinja2.Environment(
-            loader=_HeaderStrippingLoader(str(directory), encoding="utf-8"),
+            loader=_HeaderStrippingLoader(str(directory), encoding="utf-8-sig"),
             undefined=jinja2.StrictUndefined,
             autoescape=False,
             keep_trailing_newline=False,
@@ -39,7 +39,7 @@ class Prompts:
         path = self._dir / f"{name}.md"
         if not path.is_file():
             raise jinja2.TemplateNotFound(f"{name}.md")
-        header, _ = _split_header(path.read_text(encoding="utf-8"))
+        header, _ = _split_header(path.read_text(encoding="utf-8-sig"))
         version = header.get("version")
         if version is None:
             raise ValueError(f"в шапке {path.name} нет version: шапка с версией обязательна")

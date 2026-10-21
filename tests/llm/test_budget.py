@@ -37,10 +37,11 @@ def test_essential_ignores_limit():
         assert budget.held == 3.0
 
 
-def test_zero_limit_means_unlimited():
+def test_zero_limit_means_nothing_may_be_spent():
     budget = Budget(0, now=noon)
-    budget.add(1000)
-    with budget.hold("t", False, 1000):
+    with pytest.raises(BudgetExceeded), budget.hold("t", False, 0.0001):
+        pass
+    with budget.hold("t", True, 5.0):
         pass
 
 

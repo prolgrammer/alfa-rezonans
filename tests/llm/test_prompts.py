@@ -24,6 +24,12 @@ def test_include_without_header(tmp_path):
     assert "version" not in text
 
 
+def test_utf8_bom_is_ignored(tmp_path):
+    source = "---\ntask: demo\nversion: 2\n---\nТекст"
+    (tmp_path / "demo.md").write_bytes(source.encode("utf-8-sig"))
+    assert Prompts(tmp_path).render("demo", {}) == ("Текст", "demo@2")
+
+
 def test_missing_header_raises(tmp_path):
     write(tmp_path, "demo", "Без шапки", version=None)
     with pytest.raises(ValueError, match="demo.md"):

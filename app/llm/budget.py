@@ -20,7 +20,8 @@ class Budget:
         now: Callable[[], datetime] = lambda: datetime.now(MSK),
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.limit_rub = limit_rub if limit_rub > 0 else None
+        # 0 и меньше: тратить нельзя (оператор, выставивший 0, не имеет в виду «без лимита»)
+        self.limit_rub = limit_rub
         self._store = store
         self._now = now
         self._clock = clock
@@ -51,12 +52,13 @@ class Budget:
     def hold(self, task: str, essential: bool, reserve_rub: float) -> Iterator[None]:
         """Проверка с резервом и удержание резерва на время вызова: параллельные вызовы видят друг друга."""
         self._roll()
-        if not essential and self.limit_rub is not None:
-            if self.spent >= self.limit_rub or self.spent + self.held + reserve_rub > self.limit_rub:
-                raise BudgetExceeded(
-                    f"дневной бюджет LLM исчерпан ({self.spent:.2f} из {self.limit_rub:.0f} ₽, "
-                    f"вызов до {reserve_rub:.2f} ₽): {task}"
-                )
+        if not essential and (
+            self.spent >= self.limit_rub or self.spent + self.held + reserve_rub > self.limit_rub
+        ):
+            raise BudgetExceeded(
+                f"дневной бюджет LLM исчерпан ({self.spent:.2f} из {self.limit_rub:.0f} ₽, "
+                f"вызов до {reserve_rub:.2f} ₽): {task}"
+            )
         self.held += reserve_rub
         try:
             yield
