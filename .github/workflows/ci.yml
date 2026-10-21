@@ -44,6 +44,8 @@ jobs:
       - name: Проверить, что тесты с БД не будут пропущены
         run: test -n "$TEST_DATABASE_URL"
       - name: Тесты
+        # shell: bash включает pipefail: упавший pytest не прячется за tee
+        shell: bash
         run: |
           uv run pytest -rs 2>&1 | tee pytest.log
           if grep -q '^SKIPPED' pytest.log; then
@@ -64,14 +66,20 @@ jobs:
           echo "Размер образа orientir: $((size / 1024 / 1024)) МБ"
 
   web:
-    if: hashFiles('web/package.json') != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # hashFiles в условии задачи недоступна, поэтому наличие веба проверяем шагом
+      - name: Есть ли web/package.json
+        id: web
+        run: echo "exists=$([ -f web/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.web.outputs.exists == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci --prefix web
-      - run: npm --prefix web run build
+      - if: steps.web.outputs.exists == 'true'
+        run: npm ci --prefix web
+      - if: steps.web.outputs.exists == 'true'
+        run: npm --prefix web run build
