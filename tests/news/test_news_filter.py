@@ -92,7 +92,7 @@ async def test_batch_of_ten_is_one_call_and_keeps_order(fake):
     assert [r.business for r in results] == [n % 2 == 1 for n in range(1, 11)]
     assert [r.reason for r in results] == [f"r{n}" for n in range(1, 11)]
     call = gateway.calls[0]
-    assert (call["task"], call["version"], call["lane"]) == ("news_filter", "news_filter@1", "background")
+    assert (call["task"], call["version"], call["lane"]) == ("news_filter", "news_filter@2", "background")
 
 
 async def test_twenty_three_items_are_three_batches(fake):
@@ -116,6 +116,7 @@ async def test_prompt_wraps_every_item_into_its_source(fake):
     assert '<source n="2" source="rbc">\nНовость номер 2\n</source>' in prompt
     assert "ровно 2 элементов" in prompt
     assert "Прошлый ответ" not in prompt
+    assert prompt.rstrip().endswith("Ответ — только JSON на 2 публикаций.")
 
 
 async def test_long_item_is_limited(fake):
@@ -137,8 +138,8 @@ async def test_missing_answer_is_asked_again_only_for_missing(fake):
     results = await news_filter(items)
     assert [len(numbers(p)) for p in gateway.prompts] == [5, 2]
     retry = gateway.prompts[1]
-    assert "Прошлый ответ не прошёл проверку" in retry
-    assert "нет ответа для номеров 2, 4" in retry
+    assert "Прошлый ответ был неполным" in retry
+    assert "Прошлый ответ" not in gateway.prompts[0]
     assert "Новость номер 2\n" in retry and "Новость номер 4\n" in retry
     assert "Новость номер 1\n" not in retry
     assert [r.reason for r in results] == ["нет", "повтор 1", "нет", "повтор 2", "нет"]
@@ -207,16 +208,87 @@ async def test_reason_is_trimmed_and_never_empty(fake):
     assert empty.reason == EMPTY_REASON
 
 
-async def test_injections_are_quarantined_without_the_model(fake):
+async def test_markup_injections_are_quarantined_without_the_model(fake):
     gateway = fake()
-    rows = [r for r in INJECTIONS if {"command", "source_tag", "markup_tag"} & set(r["expect_flags"])]
-    assert len(rows) >= 7
+    rows = [r for r in INJECTIONS if {"source_tag", "markup_tag"} & set(r["expect_flags"])]
+    assert len(rows) >= 3
     items = [item(n, row["title"], row["text"][:1900]) for n, row in enumerate(rows, 1)] + [item(99)]
     results = await news_filter(items)
     assert all(not r.business and r.reason.startswith("подозрение на инъекцию: ") for r in results[:-1])
-    assert len(gateway.prompts) == 1
     assert numbers(gateway.prompts[0]) == [1]
     assert "Новость номер 99" in gateway.prompts[0]
+
+
+async def test_command_phrases_go_to_the_model_marked(fake):
+    rows = [r for r in INJECTIONS if r["expect_flags"] == ["command"]]
+    assert rows
+    real = "Минцифры утвердило инструкции для ИИ-сервисов банков"
+    gateway = fake()
+    results = await news_filter(
+        [item(1, real)] + [item(n, r["title"], r["text"]) for n, r in enumerate(rows, 2)]
+    )
+    assert [r.reason for r in results] == [f"r{n}" for n in range(1, len(rows) + 2)]
+    assert "[!команда]" in gateway.prompts[0]
+
+
+async def test_quarantined_items_keep_positions_across_batches(fake):
+    bad = next(r for r in INJECTIONS if "source_tag" in r["expect_flags"])
+    items = [item(n) for n in range(1, 13)]
+    items.insert(3, item(50, bad["title"], bad["text"]))
+    items.insert(11, item(51, bad["title"], bad["text"]))
+    gateway = fake(answer=lambda ns: [{"n": n, "business": True, "reason": f"ок {n}"} for n in ns])
+    results = await news_filter(items)
+    assert [r.raw_item_id for r in results] == [i.id for i in items]
+    assert [r.business for r in results].count(False) == 2
+    assert not results[3].business and not results[11].business
+    assert sorted(len(numbers(p)) for p in gateway.prompts) == [2, 10]
+
+
+async def test_same_item_twice_gets_two_answers(fake):
+    fake()
+    first, second = await news_filter([item(1), item(1)])
+    assert first.raw_item_id == second.raw_item_id
+    assert (first.reason, second.reason) == ("r1", "r2")
+
+
+async def test_failed_retry_keeps_answers_already_received(fake, monkeypatch):
+    gateway = fake(answer=lambda ns: [{"n": n, "business": False, "reason": "нет"} for n in ns if n != 3])
+    real_json = gateway.json
+
+    async def retry_fails(task, prompt, variables, schema, **kwargs):
+        if variables["retry"]:
+            raise BudgetExceeded("кончился бюджет")
+        return await real_json(task, prompt, variables, schema, **kwargs)
+
+    monkeypatch.setattr(gateway, "json", retry_fails)
+    results = await news_filter([item(n) for n in range(1, 5)])
+    assert [(r.business, r.reason) for r in results] == [
+        (False, "нет"),
+        (False, "нет"),
+        (True, NO_ANSWER_REASON),
+        (False, "нет"),
+    ]
+
+
+async def test_no_more_than_three_batches_at_once(fake, monkeypatch):
+    gateway = fake()
+    real_json = gateway.json
+    running = peak = 0
+
+    async def counting(*args, **kwargs):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        try:
+            await asyncio.sleep(0.01)
+            return await real_json(*args, **kwargs)
+        finally:
+            running -= 1
+
+    monkeypatch.setattr(gateway, "json", counting)
+    results = await news_filter([item(n) for n in range(1, 81)])
+    assert len(results) == 80
+    assert peak == extract.FILTER_CONCURRENCY == 3
 
 
 async def test_base64_alone_is_not_quarantined(fake):

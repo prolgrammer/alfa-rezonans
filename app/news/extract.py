@@ -13,9 +13,14 @@ _EVENTS = TypeAdapter(list[Event])
 FILTER_BATCH = 10  # ML-4: пачка по 10 публикаций на вызов
 # ~400–500 токенов русского текста: укладываемся в 600 токенов на публикацию из ML-4
 FILTER_ITEM_LIMIT = 1500
+# Фоновых слотов у шлюза три, а дедлайн вызова идёт и в очереди за слотом: без предела хвост большой
+# выгрузки истёк бы, не дойдя до модели, и занял бы слоты карточек событий.
+FILTER_CONCURRENCY = 3
 _REASON_MAX = 200
-# base64 бывает и во вложениях настоящих пресс-релизов, поэтому сам по себе не повод отсеять
-_INJECTION_FLAGS = frozenset({Flag.SOURCE_TAG, Flag.MARKUP_TAG, Flag.COMMAND})
+# Попытка закрыть <source> или подсунуть разметку ролей в обычной новости не встречается — такую публикацию
+# не показываем ни фильтру, ни следующим шагам. Фраза-команда бывает и в настоящей новости («инструкции
+# для ИИ-сервисов банков»): она уходит модели помеченной. base64 бывает во вложениях пресс-релизов.
+_QUARANTINE_FLAGS = frozenset({Flag.SOURCE_TAG, Flag.MARKUP_TAG})
 
 NO_LLM_REASON = "фильтр без LLM: пропущено дальше"
 NO_ANSWER_REASON = "модель не дала ответа: пропущено дальше"
@@ -41,30 +46,23 @@ def _result(item: RawItemIn, business: bool, reason: str) -> NewsFilterResult:
     return NewsFilterResult(raw_item_id=item.id, business=business, reason=reason[:_REASON_MAX])
 
 
-def _accept(answer: NewsFilterBatch, count: int) -> tuple[dict[int, _Verdict], list[str]]:
+def _accept(answer: NewsFilterBatch, count: int) -> dict[int, _Verdict]:
     verdicts: dict[int, _Verdict] = {}
-    errors: list[str] = []
     for verdict in answer.items:
-        if not 1 <= verdict.n <= count:
-            errors.append(f"номер {verdict.n} вне 1..{count}")
-        elif verdict.n in verdicts:
-            errors.append(f"номер {verdict.n} повторяется")
-        else:
+        # номер вне пачки и повтор отбрасываем: побеждает первый ответ на номер
+        if 1 <= verdict.n <= count and verdict.n not in verdicts:
             verdicts[verdict.n] = verdict
-    missing = [n for n in range(1, count + 1) if n not in verdicts]
-    if missing:
-        errors.append(f"нет ответа для номеров {', '.join(map(str, missing))}")
-    return verdicts, errors
+    return verdicts
 
 
-async def _ask(batch: list[RawItemIn], errors: list[str]) -> tuple[dict[int, _Verdict], list[str]]:
+async def _ask(batch: list[RawItemIn], *, retry: bool) -> dict[int, _Verdict]:
     sources = render_sources(
         [Source(_item_text(item), {"source": item.source_id}) for item in batch], limit=FILTER_ITEM_LIMIT
     )
     answer = await gw.json(
         "news_filter",
         "news_filter",
-        {"sources": sources.text, "count": len(batch), "errors": errors},
+        {"sources": sources.text, "count": len(batch), "retry": retry},
         NewsFilterBatch,
         lane="background",
     )
@@ -73,14 +71,17 @@ async def _ask(batch: list[RawItemIn], errors: list[str]) -> tuple[dict[int, _Ve
 
 async def _filter_batch(batch: list[RawItemIn]) -> list[NewsFilterResult]:
     try:
-        verdicts, errors = await _ask(batch, [])
-        missing = [n for n in range(1, len(batch) + 1) if n not in verdicts]
-        if missing:
-            # одна перегенерация со списком ошибок — только для публикаций без ответа
-            retry, _ = await _ask([batch[n - 1] for n in missing], errors)
-            verdicts |= {missing[n - 1]: v for n, v in retry.items()}
+        verdicts = await _ask(batch, retry=False)
     except LLMUnavailable:
         return [_result(item, True, NO_LLM_REASON) for item in batch]
+    missing = [n for n in range(1, len(batch) + 1) if n not in verdicts]
+    if missing:
+        # одна перегенерация — только для публикаций без ответа; её сбой не отменяет полученные ответы
+        try:
+            retry = await _ask([batch[n - 1] for n in missing], retry=True)
+            verdicts |= {missing[n - 1]: v for n, v in retry.items()}
+        except LLMUnavailable:
+            pass
     return [
         _result(item, v.business, v.reason)
         if (v := verdicts.get(n))
@@ -93,15 +94,20 @@ async def news_filter(items: list[RawItemIn]) -> list[NewsFilterResult]:
     results: dict[int, NewsFilterResult] = {}
     to_model: list[tuple[int, RawItemIn]] = []
     for index, item in enumerate(items):
-        suspicious = neutralize(_item_text(item)).flags & _INJECTION_FLAGS
+        suspicious = neutralize(_item_text(item)).flags & _QUARANTINE_FLAGS
         if suspicious:
-            # текст, который пытается управлять моделью, не показываем ни фильтру, ни следующим шагам
             reason = "подозрение на инъекцию: " + ", ".join(sorted(suspicious))
             results[index] = _result(item, False, reason)
         else:
             to_model.append((index, item))
     batches = list(batched(to_model, FILTER_BATCH))
-    answers = await asyncio.gather(*(_filter_batch([item for _, item in batch]) for batch in batches))
+    slots = asyncio.Semaphore(FILTER_CONCURRENCY)
+
+    async def run(batch: tuple[tuple[int, RawItemIn], ...]) -> list[NewsFilterResult]:
+        async with slots:
+            return await _filter_batch([item for _, item in batch])
+
+    answers = await asyncio.gather(*(run(batch) for batch in batches))
     for batch, answer in zip(batches, answers, strict=True):
         for (index, _), result in zip(batch, answer, strict=True):
             results[index] = result
