@@ -1,0 +1,114 @@
+{
+  "C-DEV-01": [
+    {
+      "event_id": 1,
+      "score": 0.91,
+      "terms": {
+        "exposure": 0.9,
+        "sector": 0.8,
+        "counterparties": 0.1,
+        "region": 0.5,
+        "importance": 0.9,
+        "bank": 0.7,
+        "freshness": 0.6,
+        "user": 0.0,
+        "penalty": 0.0
+      },
+      "stage": "shown",
+      "reason": "Кредиты и гарантии, девелопмент: ставка влияет на расходы по долгу и на спрос на жильё.",
+      "judge": 3.0
+    },
+    {
+      "event_id": 3,
+      "score": 0.52,
+      "terms": {
+        "exposure": 0.3,
+        "sector": 0.5,
+        "counterparties": 0.7,
+        "region": 0.5,
+        "importance": 0.5,
+        "bank": 0.4,
+        "freshness": 0.9,
+        "user": 0.0,
+        "penalty": 0.0
+      },
+      "stage": "shown",
+      "reason": "Металлурги — 17% поставщиков: удешевление металла снизит издержки на строительство.",
+      "judge": 1.0
+    },
+    {
+      "event_id": 2,
+      "score": 0.31,
+      "terms": {
+        "exposure": 0.2,
+        "sector": 0.1,
+        "counterparties": 0.1,
+        "region": 0.3,
+        "importance": 0.4,
+        "bank": 0.0,
+        "freshness": 0.9,
+        "user": 0.0,
+        "penalty": 0.1
+      },
+      "stage": "shown",
+      "reason": "Влияние неясно: доля импортных материалов в данных не указана.",
+      "judge": null
+    }
+  ],
+  "C-IT-01": [
+    {
+      "event_id": 1,
+      "score": 0.78,
+      "terms": {
+        "exposure": 0.8,
+        "sector": 0.3,
+        "counterparties": 0.3,
+        "region": 0.5,
+        "importance": 0.9,
+        "bank": 0.7,
+        "freshness": 0.6,
+        "user": 0.0,
+        "penalty": 0.0
+      },
+      "stage": "shown",
+      "reason": "Депозиты без кредитов: высокая ставка повышает доход на свободные деньги.",
+      "judge": 2.0
+    },
+    {
+      "event_id": 2,
+      "score": 0.47,
+      "terms": {
+        "exposure": 0.5,
+        "sector": 0.2,
+        "counterparties": 0.2,
+        "region": 0.4,
+        "importance": 0.4,
+        "bank": 0.0,
+        "freshness": 0.9,
+        "user": 0.0,
+        "penalty": 0.0
+      },
+      "stage": "shown",
+      "reason": "Внешняя торговля с Китаем: закупки оборудования зависят от курса юаня.",
+      "judge": 1.0
+    },
+    {
+      "event_id": 3,
+      "score": 0.09,
+      "terms": {
+        "exposure": 0.05,
+        "sector": 0.0,
+        "counterparties": 0.0,
+        "region": 0.2,
+        "importance": 0.5,
+        "bank": 0.2,
+        "freshness": 0.9,
+        "user": 0.0,
+        "penalty": 0.2
+      },
+      "stage": "below_threshold",
+      "reason": "Ниже порога показа: событие про металлургию, а в профиле нет ни отрасли, ни поставщиков из металлов.",
+      "judge": null
+    }
+  ]
+}

@@ -1,0 +1,5104 @@
+{
+  "components": {
+    "schemas": {
+      "Access": {
+        "description": "Права в сервисе.",
+        "enum": [
+          "client",
+          "expert",
+          "admin"
+        ],
+        "title": "Access",
+        "type": "string"
+      },
+      "AgentStep": {
+        "additionalProperties": false,
+        "properties": {
+          "cost_rub": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Cost Rub",
+            "type": "number"
+          },
+          "input": {
+            "maxLength": 500,
+            "title": "Input",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/StepKind"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "ms": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Ms",
+            "type": "integer"
+          },
+          "output": {
+            "maxLength": 1000,
+            "title": "Output",
+            "type": "string"
+          },
+          "seq": {
+            "minimum": 1,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 120,
+            "title": "Title",
+            "type": "string"
+          },
+          "tokens_in": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Tokens Out",
+            "type": "integer"
+          },
+          "tool_call": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "title",
+          "input",
+          "output",
+          "model",
+          "tokens_in",
+          "tokens_out",
+          "cost_rub",
+          "ms",
+          "tool_call"
+        ],
+        "title": "AgentStep",
+        "type": "object"
+      },
+      "ApproachMetrics": {
+        "additionalProperties": false,
+        "properties": {
+          "metrics": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 120,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "metrics"
+        ],
+        "title": "ApproachMetrics",
+        "type": "object"
+      },
+      "BankRef": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "bank",
+            "title": "Kind",
+            "type": "string"
+          },
+          "page": {
+            "minimum": 1,
+            "title": "Page",
+            "type": "integer"
+          },
+          "published_on": {
+            "format": "date",
+            "title": "Published On",
+            "type": "string"
+          },
+          "thesis_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thesis Id"
+          }
+        },
+        "required": [
+          "kind",
+          "doc_id",
+          "page",
+          "thesis_id",
+          "published_on"
+        ],
+        "title": "BankRef",
+        "type": "object"
+      },
+      "BankThesis": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/FactorDirection"
+          },
+          "factors": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Factors",
+            "type": "array"
+          },
+          "horizon": {
+            "$ref": "#/components/schemas/Horizon"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ThesisKind"
+          },
+          "numbers": {
+            "items": {
+              "$ref": "#/components/schemas/ThesisNumber"
+            },
+            "maxItems": 10,
+            "title": "Numbers",
+            "type": "array"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "quote": {
+            "maxLength": 600,
+            "title": "Quote",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "quote",
+          "page",
+          "kind",
+          "factors",
+          "direction",
+          "horizon",
+          "numbers"
+        ],
+        "title": "BankThesis",
+        "type": "object"
+      },
+      "BankView": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap"
+          },
+          "match": {
+            "$ref": "#/components/schemas/ForecastMatch"
+          },
+          "statements": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 4,
+            "title": "Statements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "statements",
+          "as_of",
+          "match",
+          "gap"
+        ],
+        "title": "BankView",
+        "type": "object"
+      },
+      "CardCause": {
+        "additionalProperties": false,
+        "properties": {
+          "cites": {
+            "items": {
+              "maximum": 5.0,
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Cites",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 400,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "cites"
+        ],
+        "title": "CardCause",
+        "type": "object"
+      },
+      "CardClaim": {
+        "additionalProperties": false,
+        "properties": {
+          "cites": {
+            "items": {
+              "maximum": 5.0,
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Cites",
+            "type": "array"
+          },
+          "quote": {
+            "maxLength": 500,
+            "title": "Quote",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 400,
+            "title": "Text",
+            "type": "string"
+          },
+          "who": {
+            "maxLength": 120,
+            "title": "Who",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "who",
+          "cites",
+          "quote"
+        ],
+        "title": "CardClaim",
+        "type": "object"
+      },
+      "CardDate": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "what": {
+            "maxLength": 120,
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "date"
+        ],
+        "title": "CardDate",
+        "type": "object"
+      },
+      "CardFact": {
+        "additionalProperties": false,
+        "properties": {
+          "cites": {
+            "items": {
+              "maximum": 5.0,
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Cites",
+            "type": "array"
+          },
+          "quote": {
+            "maxLength": 500,
+            "title": "Quote",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 400,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "cites",
+          "quote"
+        ],
+        "title": "CardFact",
+        "type": "object"
+      },
+      "CardFactor": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/FactorDirection"
+          },
+          "id": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "magnitude": {
+            "$ref": "#/components/schemas/Magnitude"
+          },
+          "quote": {
+            "maxLength": 500,
+            "title": "Quote",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "direction",
+          "magnitude",
+          "quote"
+        ],
+        "title": "CardFactor",
+        "type": "object"
+      },
+      "CardNumber": {
+        "additionalProperties": false,
+        "properties": {
+          "quote": {
+            "maxLength": 500,
+            "title": "Quote",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 20,
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "what": {
+            "maxLength": 120,
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "value",
+          "unit",
+          "quote"
+        ],
+        "title": "CardNumber",
+        "type": "object"
+      },
+      "CardSector": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/SectorRole"
+          }
+        },
+        "required": [
+          "id",
+          "role"
+        ],
+        "title": "CardSector",
+        "type": "object"
+      },
+      "CardStatus": {
+        "enum": [
+          "none",
+          "pending",
+          "ok",
+          "failed"
+        ],
+        "title": "CardStatus",
+        "type": "string"
+      },
+      "Certainty": {
+        "enum": [
+          "happened",
+          "decided",
+          "planned",
+          "rumor"
+        ],
+        "title": "Certainty",
+        "type": "string"
+      },
+      "ChatAnswer": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "series": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketSeries"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestions": {
+            "items": {
+              "maxLength": 120,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Suggestions",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence",
+          "series",
+          "suggestions"
+        ],
+        "title": "ChatAnswer",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "chat_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chat Id"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "question": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "CompanyProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "completeness": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Completeness",
+            "type": "number"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "exposures": {
+            "items": {
+              "$ref": "#/components/schemas/Exposure"
+            },
+            "title": "Exposures",
+            "type": "array"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "hash": {
+            "maxLength": 64,
+            "title": "Hash",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "company_id",
+          "version",
+          "hash",
+          "completeness",
+          "features",
+          "exposures",
+          "computed_at"
+        ],
+        "title": "CompanyProfile",
+        "type": "object"
+      },
+      "Compare": {
+        "additionalProperties": false,
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/CompareSide"
+          },
+          "b": {
+            "$ref": "#/components/schemas/CompareSide"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "a",
+          "b"
+        ],
+        "title": "Compare",
+        "type": "object"
+      },
+      "CompareSide": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "feed": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "title": "Feed",
+            "type": "array"
+          },
+          "insight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InsightResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "company_id",
+          "feed",
+          "insight"
+        ],
+        "title": "CompareSide",
+        "type": "object"
+      },
+      "Confidence": {
+        "enum": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "title": "Confidence",
+        "type": "string"
+      },
+      "CounterpartyShare": {
+        "additionalProperties": false,
+        "description": "Доля отрасли среди контрагентов; идентификаторов самих контрагентов здесь нет.",
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Regions",
+            "type": "array"
+          },
+          "sector": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Sector",
+            "type": "string"
+          },
+          "share": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Share",
+            "type": "number"
+          }
+        },
+        "required": [
+          "sector",
+          "share",
+          "count",
+          "regions"
+        ],
+        "title": "CounterpartyShare",
+        "type": "object"
+      },
+      "DemoSwitch": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "maxLength": 64,
+            "title": "Company Id",
+            "type": "string"
+          },
+          "user_role": {
+            "$ref": "#/components/schemas/UserRole"
+          }
+        },
+        "required": [
+          "company_id",
+          "user_role"
+        ],
+        "title": "DemoSwitch",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Details",
+            "type": "object"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "Event": {
+        "additionalProperties": false,
+        "properties": {
+          "card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventCard"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "card_status": {
+            "$ref": "#/components/schemas/CardStatus"
+          },
+          "factors": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "first_seen_at": {
+            "format": "date-time",
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "has_official": {
+            "title": "Has Official",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_item_at": {
+            "format": "date-time",
+            "title": "Last Item At",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Regions",
+            "type": "array"
+          },
+          "sectors": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "title": "Sectors",
+            "type": "array"
+          },
+          "source_count": {
+            "minimum": 1.0,
+            "title": "Source Count",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "first_seen_at",
+          "last_item_at",
+          "source_count",
+          "has_official",
+          "factors",
+          "sectors",
+          "regions",
+          "card",
+          "card_status"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "EventCard": {
+        "additionalProperties": false,
+        "properties": {
+          "actors": {
+            "items": {
+              "maxLength": 120,
+              "type": "string"
+            },
+            "maxItems": 15,
+            "title": "Actors",
+            "type": "array"
+          },
+          "causes": {
+            "items": {
+              "$ref": "#/components/schemas/CardCause"
+            },
+            "maxItems": 5,
+            "title": "Causes",
+            "type": "array"
+          },
+          "certainty": {
+            "$ref": "#/components/schemas/Certainty"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/CardClaim"
+            },
+            "maxItems": 10,
+            "title": "Claims",
+            "type": "array"
+          },
+          "dates": {
+            "items": {
+              "$ref": "#/components/schemas/CardDate"
+            },
+            "maxItems": 10,
+            "title": "Dates",
+            "type": "array"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "factors": {
+            "items": {
+              "$ref": "#/components/schemas/CardFactor"
+            },
+            "maxItems": 8,
+            "title": "Factors",
+            "type": "array"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/CardFact"
+            },
+            "maxItems": 10,
+            "title": "Facts",
+            "type": "array"
+          },
+          "horizon": {
+            "$ref": "#/components/schemas/Horizon"
+          },
+          "numbers": {
+            "items": {
+              "$ref": "#/components/schemas/CardNumber"
+            },
+            "maxItems": 15,
+            "title": "Numbers",
+            "type": "array"
+          },
+          "regions": {
+            "items": {
+              "maxLength": 60,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Regions",
+            "type": "array"
+          },
+          "sectors": {
+            "items": {
+              "$ref": "#/components/schemas/CardSector"
+            },
+            "maxItems": 10,
+            "title": "Sectors",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 600,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "facts",
+          "claims",
+          "actors",
+          "dates",
+          "numbers",
+          "causes",
+          "event_type",
+          "factors",
+          "sectors",
+          "regions",
+          "horizon",
+          "certainty"
+        ],
+        "title": "EventCard",
+        "type": "object"
+      },
+      "EventDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "bank": {
+            "items": {
+              "$ref": "#/components/schemas/ThesisItem"
+            },
+            "title": "Bank",
+            "type": "array"
+          },
+          "event": {
+            "$ref": "#/components/schemas/Event"
+          },
+          "market": {
+            "items": {
+              "$ref": "#/components/schemas/MarketSeries"
+            },
+            "title": "Market",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceFragment"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event",
+          "sources",
+          "market",
+          "bank"
+        ],
+        "title": "EventDetail",
+        "type": "object"
+      },
+      "EventType": {
+        "enum": [
+          "regulator_decision",
+          "macro_stats",
+          "prices_markets",
+          "currency",
+          "taxes_law",
+          "sanctions_trade",
+          "sector",
+          "corporate",
+          "infrastructure_logistics",
+          "emergency",
+          "other"
+        ],
+        "title": "EventType",
+        "type": "string"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^E\\d+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "ref": {
+            "discriminator": {
+              "mapping": {
+                "bank": "#/components/schemas/BankRef",
+                "feature": "#/components/schemas/FeatureRef",
+                "market": "#/components/schemas/MarketRef",
+                "news": "#/components/schemas/NewsRef"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NewsRef"
+              },
+              {
+                "$ref": "#/components/schemas/BankRef"
+              },
+              {
+                "$ref": "#/components/schemas/MarketRef"
+              },
+              {
+                "$ref": "#/components/schemas/FeatureRef"
+              }
+            ],
+            "title": "Ref"
+          },
+          "text": {
+            "maxLength": 1500,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EvidenceType"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "text",
+          "ref"
+        ],
+        "title": "Evidence",
+        "type": "object"
+      },
+      "EvidenceType": {
+        "enum": [
+          "news",
+          "bank",
+          "market",
+          "feature"
+        ],
+        "title": "EvidenceType",
+        "type": "string"
+      },
+      "ExpertAction": {
+        "enum": [
+          "accept",
+          "edit",
+          "reject"
+        ],
+        "title": "ExpertAction",
+        "type": "string"
+      },
+      "Exposure": {
+        "additionalProperties": false,
+        "properties": {
+          "because": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Because",
+            "type": "array"
+          },
+          "channels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "factor": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Factor",
+            "type": "string"
+          },
+          "sign": {
+            "enum": [
+              -1,
+              0,
+              1
+            ],
+            "title": "Sign",
+            "type": "integer"
+          },
+          "strength": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Strength",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "factor",
+          "sign",
+          "strength",
+          "channels",
+          "because"
+        ],
+        "title": "Exposure",
+        "type": "object"
+      },
+      "FactorDirection": {
+        "description": "Куда движется фактор в событии.",
+        "enum": [
+          "up",
+          "down",
+          "flat",
+          "volatile",
+          "unclear"
+        ],
+        "title": "FactorDirection",
+        "type": "string"
+      },
+      "Feature": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "key": {
+            "pattern": "^[a-z][a-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "source": {
+            "pattern": "^((csv|calc):[A-Za-z0-9_.]+|group|user)$",
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "source",
+          "detail"
+        ],
+        "title": "Feature",
+        "type": "object"
+      },
+      "FeatureRef": {
+        "additionalProperties": false,
+        "properties": {
+          "feature_key": {
+            "title": "Feature Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "feature",
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "feature_key",
+          "source"
+        ],
+        "title": "FeatureRef",
+        "type": "object"
+      },
+      "Feed": {
+        "additionalProperties": false,
+        "properties": {
+          "completeness": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Completeness",
+            "type": "number"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "low_data": {
+            "title": "Low Data",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "completeness",
+          "low_data"
+        ],
+        "title": "Feed",
+        "type": "object"
+      },
+      "FeedFilter": {
+        "enum": [
+          "all",
+          "risk",
+          "opportunity"
+        ],
+        "title": "FeedFilter",
+        "type": "string"
+      },
+      "FeedItem": {
+        "additionalProperties": false,
+        "properties": {
+          "bank_line": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Line"
+          },
+          "bank_line_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bank Line Date"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "factors": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "title": "Factors",
+            "type": "array"
+          },
+          "has_official": {
+            "title": "Has Official",
+            "type": "boolean"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "maxLength": 110,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headline"
+          },
+          "impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Impact"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "important_for_all": {
+            "title": "Important For All",
+            "type": "boolean"
+          },
+          "insight_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insight Id"
+          },
+          "last_item_at": {
+            "format": "date-time",
+            "title": "Last Item At",
+            "type": "string"
+          },
+          "main_factor": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main Factor"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "source_count": {
+            "minimum": 1.0,
+            "title": "Source Count",
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 300,
+            "title": "Title",
+            "type": "string"
+          },
+          "why": {
+            "items": {
+              "$ref": "#/components/schemas/WhyChip"
+            },
+            "maxItems": 3,
+            "title": "Why",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event_id",
+          "title",
+          "headline",
+          "impact",
+          "why",
+          "bank_line",
+          "bank_line_date",
+          "main_factor",
+          "factors",
+          "source_count",
+          "has_official",
+          "last_item_at",
+          "important_for_all",
+          "insight_id",
+          "score"
+        ],
+        "title": "FeedItem",
+        "type": "object"
+      },
+      "FeedbackIn": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "insight_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insight Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/FeedbackVerdict"
+          }
+        },
+        "required": [
+          "event_id",
+          "verdict"
+        ],
+        "title": "FeedbackIn",
+        "type": "object"
+      },
+      "FeedbackReason": {
+        "enum": [
+          "not_my_topic",
+          "already_knew",
+          "factual_error",
+          "wrong_conclusion"
+        ],
+        "title": "FeedbackReason",
+        "type": "string"
+      },
+      "FeedbackVerdict": {
+        "enum": [
+          "useful",
+          "miss"
+        ],
+        "title": "FeedbackVerdict",
+        "type": "string"
+      },
+      "ForecastMatch": {
+        "enum": [
+          "matches",
+          "contradicts",
+          "partly",
+          "no_forecast"
+        ],
+        "title": "ForecastMatch",
+        "type": "string"
+      },
+      "Health": {
+        "additionalProperties": false,
+        "properties": {
+          "mock": {
+            "title": "Mock",
+            "type": "boolean"
+          },
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "mock"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "Horizon": {
+        "enum": [
+          "days",
+          "weeks",
+          "months",
+          "years"
+        ],
+        "title": "Horizon",
+        "type": "string"
+      },
+      "Impact": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/ImpactDirection"
+          },
+          "horizon": {
+            "$ref": "#/components/schemas/Horizon"
+          },
+          "strength": {
+            "$ref": "#/components/schemas/Magnitude"
+          }
+        },
+        "required": [
+          "direction",
+          "strength",
+          "horizon"
+        ],
+        "title": "Impact",
+        "type": "object"
+      },
+      "ImpactDirection": {
+        "enum": [
+          "risk",
+          "opportunity",
+          "mixed",
+          "neutral"
+        ],
+        "title": "ImpactDirection",
+        "type": "string"
+      },
+      "Insight": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 5,
+            "title": "Actions",
+            "type": "array"
+          },
+          "assumptions": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 6,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "bank_offer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Offer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bank_view": {
+            "$ref": "#/components/schemas/BankView"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "headline": {
+            "maxLength": 110,
+            "minLength": 1,
+            "title": "Headline",
+            "type": "string"
+          },
+          "impact": {
+            "$ref": "#/components/schemas/Impact"
+          },
+          "limitations": {
+            "items": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Limitations",
+            "type": "array"
+          },
+          "opportunities": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 6,
+            "title": "Opportunities",
+            "type": "array"
+          },
+          "questions": {
+            "items": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Questions",
+            "type": "array"
+          },
+          "risks": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 6,
+            "title": "Risks",
+            "type": "array"
+          },
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/Scenario"
+            },
+            "maxItems": 2,
+            "title": "Scenarios",
+            "type": "array"
+          },
+          "watch": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 4,
+            "title": "Watch",
+            "type": "array"
+          },
+          "what_happened": {
+            "items": {
+              "$ref": "#/components/schemas/Statement"
+            },
+            "maxItems": 6,
+            "title": "What Happened",
+            "type": "array"
+          },
+          "why_it_matters": {
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            },
+            "maxItems": 6,
+            "title": "Why It Matters",
+            "type": "array"
+          }
+        },
+        "required": [
+          "headline",
+          "impact",
+          "what_happened",
+          "assumptions",
+          "why_it_matters",
+          "risks",
+          "opportunities",
+          "watch",
+          "scenarios",
+          "actions",
+          "questions",
+          "bank_view",
+          "bank_offer",
+          "confidence",
+          "limitations"
+        ],
+        "title": "Insight",
+        "type": "object"
+      },
+      "InsightChecks": {
+        "additionalProperties": false,
+        "properties": {
+          "passed_first_try": {
+            "minimum": 0,
+            "title": "Passed First Try",
+            "type": "integer"
+          },
+          "removed": {
+            "minimum": 0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "revisions": {
+            "maximum": 2,
+            "minimum": 0,
+            "title": "Revisions",
+            "type": "integer"
+          },
+          "statements_total": {
+            "minimum": 0,
+            "title": "Statements Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "statements_total",
+          "passed_first_try",
+          "removed",
+          "revisions"
+        ],
+        "title": "InsightChecks",
+        "type": "object"
+      },
+      "InsightMode": {
+        "enum": [
+          "full",
+          "brief"
+        ],
+        "title": "InsightMode",
+        "type": "string"
+      },
+      "InsightResult": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/InsightChecks"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "insight": {
+            "$ref": "#/components/schemas/Insight"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/InsightMode"
+          }
+        },
+        "required": [
+          "insight",
+          "evidence",
+          "mode",
+          "checks"
+        ],
+        "title": "InsightResult",
+        "type": "object"
+      },
+      "InsightStart": {
+        "additionalProperties": false,
+        "properties": {
+          "cached": {
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "insight_id": {
+            "title": "Insight Id",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InsightStatus"
+          }
+        },
+        "required": [
+          "insight_id",
+          "status",
+          "cached"
+        ],
+        "title": "InsightStart",
+        "type": "object"
+      },
+      "InsightStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "done",
+          "failed"
+        ],
+        "title": "InsightStatus",
+        "type": "string"
+      },
+      "JsonValue": {},
+      "Link": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "evidence": {
+            "items": {
+              "pattern": "^E\\d+$",
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "feature_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Feature Keys",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^s\\d+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "text": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "origin",
+          "evidence",
+          "confidence",
+          "feature_keys"
+        ],
+        "title": "Link",
+        "type": "object"
+      },
+      "LlmUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_rub": {
+            "minimum": 0.0,
+            "title": "Budget Rub",
+            "type": "number"
+          },
+          "by_task": {
+            "items": {
+              "$ref": "#/components/schemas/TaskUsage"
+            },
+            "title": "By Task",
+            "type": "array"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "ladder_step": {
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Ladder Step",
+            "type": "integer"
+          },
+          "spent_rub": {
+            "minimum": 0.0,
+            "title": "Spent Rub",
+            "type": "number"
+          }
+        },
+        "required": [
+          "day",
+          "budget_rub",
+          "spent_rub",
+          "ladder_step",
+          "by_task"
+        ],
+        "title": "LlmUsage",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "login": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Login",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "login",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "Magnitude": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "Magnitude",
+        "type": "string"
+      },
+      "MarketPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "value"
+        ],
+        "title": "MarketPoint",
+        "type": "object"
+      },
+      "MarketRef": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "kind": {
+            "const": "market",
+            "title": "Kind",
+            "type": "string"
+          },
+          "series": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Series",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "series",
+          "date"
+        ],
+        "title": "MarketRef",
+        "type": "object"
+      },
+      "MarketSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "change_day": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Day"
+          },
+          "change_month": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Month"
+          },
+          "change_week": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Week"
+          },
+          "name": {
+            "maxLength": 120,
+            "title": "Name",
+            "type": "string"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/MarketPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "series": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Series",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 60,
+            "title": "Source",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 20,
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "series",
+          "name",
+          "unit",
+          "source",
+          "points",
+          "value",
+          "change_day",
+          "change_week",
+          "change_month"
+        ],
+        "title": "MarketSeries",
+        "type": "object"
+      },
+      "Me": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "company_name": {
+            "title": "Company Name",
+            "type": "string"
+          },
+          "csrf_token": {
+            "title": "Csrf Token",
+            "type": "string"
+          },
+          "login": {
+            "title": "Login",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          },
+          "user_role": {
+            "$ref": "#/components/schemas/UserRole"
+          }
+        },
+        "required": [
+          "user_id",
+          "login",
+          "company_id",
+          "company_name",
+          "user_role",
+          "access",
+          "csrf_token"
+        ],
+        "title": "Me",
+        "type": "object"
+      },
+      "NewsCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "NewsCheck",
+        "type": "object"
+      },
+      "NewsCheckResult": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "insight_id": {
+            "title": "Insight Id",
+            "type": "integer"
+          },
+          "relevance": {
+            "$ref": "#/components/schemas/RelevanceScore"
+          }
+        },
+        "required": [
+          "event_id",
+          "insight_id",
+          "relevance"
+        ],
+        "title": "NewsCheckResult",
+        "type": "object"
+      },
+      "NewsRef": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "news",
+            "title": "Kind",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "raw_item_id": {
+            "title": "Raw Item Id",
+            "type": "integer"
+          },
+          "source_name": {
+            "maxLength": 120,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "event_id",
+          "raw_item_id",
+          "url",
+          "source_name",
+          "published_at"
+        ],
+        "title": "NewsRef",
+        "type": "object"
+      },
+      "Offer": {
+        "additionalProperties": false,
+        "properties": {
+          "product_id": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 300,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "text"
+        ],
+        "title": "Offer",
+        "type": "object"
+      },
+      "Ok": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "Ok",
+        "type": "object"
+      },
+      "Origin": {
+        "enum": [
+          "fact",
+          "bank",
+          "model"
+        ],
+        "title": "Origin",
+        "type": "string"
+      },
+      "Period": {
+        "enum": [
+          "day",
+          "week",
+          "month"
+        ],
+        "title": "Period",
+        "type": "string"
+      },
+      "Profile": {
+        "additionalProperties": false,
+        "properties": {
+          "customers": {
+            "items": {
+              "$ref": "#/components/schemas/CounterpartyShare"
+            },
+            "title": "Customers",
+            "type": "array"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/CompanyProfile"
+          },
+          "suppliers": {
+            "items": {
+              "$ref": "#/components/schemas/CounterpartyShare"
+            },
+            "title": "Suppliers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "suppliers",
+          "customers"
+        ],
+        "title": "Profile",
+        "type": "object"
+      },
+      "ProfilePatch": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "maxLength": 100,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[A-Za-z0-9_]+)*$",
+            "title": "Key",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "ProfilePatch",
+        "type": "object"
+      },
+      "ProfileText": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ProfileText",
+        "type": "object"
+      },
+      "ProfileTextPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "items": {
+              "$ref": "#/components/schemas/Exposure"
+            },
+            "title": "After",
+            "type": "array"
+          },
+          "before": {
+            "items": {
+              "$ref": "#/components/schemas/Exposure"
+            },
+            "title": "Before",
+            "type": "array"
+          }
+        },
+        "required": [
+          "before",
+          "after"
+        ],
+        "title": "ProfileTextPreview",
+        "type": "object"
+      },
+      "Quality": {
+        "additionalProperties": false,
+        "properties": {
+          "approaches": {
+            "items": {
+              "$ref": "#/components/schemas/ApproachMetrics"
+            },
+            "title": "Approaches",
+            "type": "array"
+          },
+          "current": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Current",
+            "type": "object"
+          }
+        },
+        "required": [
+          "approaches",
+          "current"
+        ],
+        "title": "Quality",
+        "type": "object"
+      },
+      "RelevanceScore": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "maximum": 3.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/RelevanceStage"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/RelevanceTerms"
+          }
+        },
+        "required": [
+          "event_id",
+          "score",
+          "terms",
+          "stage",
+          "reason",
+          "judge"
+        ],
+        "title": "RelevanceScore",
+        "type": "object"
+      },
+      "RelevanceStage": {
+        "enum": [
+          "shown",
+          "below_threshold",
+          "duplicate",
+          "excluded",
+          "diversity_cut"
+        ],
+        "title": "RelevanceStage",
+        "type": "string"
+      },
+      "RelevanceTerms": {
+        "additionalProperties": false,
+        "properties": {
+          "bank": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Bank",
+            "type": "number"
+          },
+          "counterparties": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Counterparties",
+            "type": "number"
+          },
+          "exposure": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Exposure",
+            "type": "number"
+          },
+          "freshness": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Freshness",
+            "type": "number"
+          },
+          "importance": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Importance",
+            "type": "number"
+          },
+          "penalty": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Penalty",
+            "type": "number"
+          },
+          "region": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Region",
+            "type": "number"
+          },
+          "sector": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Sector",
+            "type": "number"
+          },
+          "user": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "User",
+            "type": "number"
+          }
+        },
+        "required": [
+          "exposure",
+          "sector",
+          "counterparties",
+          "region",
+          "importance",
+          "bank",
+          "freshness",
+          "user",
+          "penalty"
+        ],
+        "title": "RelevanceTerms",
+        "type": "object"
+      },
+      "ReviewIn": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ExpertAction"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "insight_id": {
+            "title": "Insight Id",
+            "type": "integer"
+          },
+          "patch": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Patch"
+          }
+        },
+        "required": [
+          "insight_id",
+          "action"
+        ],
+        "title": "ReviewIn",
+        "type": "object"
+      },
+      "ReviewQueueItem": {
+        "additionalProperties": false,
+        "properties": {
+          "company_id": {
+            "title": "Company Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "insight_id": {
+            "title": "Insight Id",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "insight_id",
+          "event_id",
+          "company_id",
+          "reason",
+          "created_at"
+        ],
+        "title": "ReviewQueueItem",
+        "type": "object"
+      },
+      "Scenario": {
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Condition",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "pattern": "^E\\d+$",
+              "type": "string"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "outcome": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "condition",
+          "outcome",
+          "evidence"
+        ],
+        "title": "Scenario",
+        "type": "object"
+      },
+      "SectorRole": {
+        "enum": [
+          "affected",
+          "beneficiary",
+          "source"
+        ],
+        "title": "SectorRole",
+        "type": "string"
+      },
+      "SourceFragment": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "is_official": {
+            "title": "Is Official",
+            "type": "boolean"
+          },
+          "n": {
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "raw_item_id": {
+            "title": "Raw Item Id",
+            "type": "integer"
+          },
+          "source_name": {
+            "maxLength": 120,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1500,
+            "title": "Text",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "event_id",
+          "raw_item_id",
+          "source_name",
+          "url",
+          "published_at",
+          "is_official",
+          "text"
+        ],
+        "title": "SourceFragment",
+        "type": "object"
+      },
+      "SourceHealth": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "items_24h": {
+            "minimum": 0.0,
+            "title": "Items 24H",
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SourceKind"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_ok_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ok At"
+          },
+          "name": {
+            "maxLength": 120,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "enabled",
+          "last_ok_at",
+          "last_error",
+          "items_24h"
+        ],
+        "title": "SourceHealth",
+        "type": "object"
+      },
+      "SourceKind": {
+        "enum": [
+          "official",
+          "news",
+          "industry"
+        ],
+        "title": "SourceKind",
+        "type": "string"
+      },
+      "Statement": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "evidence": {
+            "items": {
+              "pattern": "^E\\d+$",
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^s\\d+$",
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "text": {
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "origin",
+          "evidence",
+          "confidence"
+        ],
+        "title": "Statement",
+        "type": "object"
+      },
+      "StepKind": {
+        "enum": [
+          "links",
+          "plan",
+          "tool",
+          "draft",
+          "check",
+          "critic",
+          "revise",
+          "final",
+          "fallback"
+        ],
+        "title": "StepKind",
+        "type": "string"
+      },
+      "TaskUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "minimum": 0.0,
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_rub": {
+            "minimum": 0.0,
+            "title": "Cost Rub",
+            "type": "number"
+          },
+          "errors": {
+            "minimum": 0.0,
+            "title": "Errors",
+            "type": "integer"
+          },
+          "fallbacks": {
+            "minimum": 0.0,
+            "title": "Fallbacks",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 60,
+            "title": "Model",
+            "type": "string"
+          },
+          "p50_ms": {
+            "minimum": 0.0,
+            "title": "P50 Ms",
+            "type": "integer"
+          },
+          "task": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "model",
+          "calls",
+          "cost_rub",
+          "fallbacks",
+          "errors",
+          "p50_ms"
+        ],
+        "title": "TaskUsage",
+        "type": "object"
+      },
+      "ThesisItem": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "title": "Doc Id",
+            "type": "integer"
+          },
+          "doc_title": {
+            "maxLength": 300,
+            "title": "Doc Title",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "published_on": {
+            "format": "date",
+            "title": "Published On",
+            "type": "string"
+          },
+          "thesis": {
+            "$ref": "#/components/schemas/BankThesis"
+          },
+          "verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified"
+          }
+        },
+        "required": [
+          "id",
+          "doc_id",
+          "doc_title",
+          "published_on",
+          "verified",
+          "thesis"
+        ],
+        "title": "ThesisItem",
+        "type": "object"
+      },
+      "ThesisKind": {
+        "enum": [
+          "forecast",
+          "assessment",
+          "fact",
+          "recommendation"
+        ],
+        "title": "ThesisKind",
+        "type": "string"
+      },
+      "ThesisNumber": {
+        "additionalProperties": false,
+        "properties": {
+          "unit": {
+            "maxLength": 20,
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "what": {
+            "maxLength": 120,
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "value",
+          "unit"
+        ],
+        "title": "ThesisNumber",
+        "type": "object"
+      },
+      "ThesisVerify": {
+        "additionalProperties": false,
+        "properties": {
+          "verified": {
+            "title": "Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified"
+        ],
+        "title": "ThesisVerify",
+        "type": "object"
+      },
+      "ToolCallLog": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "minimum": 0.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "result_chars": {
+            "minimum": 0.0,
+            "title": "Result Chars",
+            "type": "integer"
+          },
+          "tool": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Tool",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "tool",
+          "args",
+          "result_chars",
+          "duration_ms",
+          "ok",
+          "created_at"
+        ],
+        "title": "ToolCallLog",
+        "type": "object"
+      },
+      "ToolCallRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "duration_ms": {
+            "minimum": 0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "result_chars": {
+            "minimum": 0,
+            "title": "Result Chars",
+            "type": "integer"
+          },
+          "tool": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool",
+          "args",
+          "result_chars",
+          "duration_ms",
+          "ok",
+          "error"
+        ],
+        "title": "ToolCallRecord",
+        "type": "object"
+      },
+      "Trace": {
+        "additionalProperties": false,
+        "properties": {
+          "insight_id": {
+            "title": "Insight Id",
+            "type": "integer"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/AgentStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "insight_id",
+          "steps"
+        ],
+        "title": "Trace",
+        "type": "object"
+      },
+      "UserRole": {
+        "description": "Роль человека в компании клиента.",
+        "enum": [
+          "owner",
+          "ceo",
+          "cfo",
+          "treasurer",
+          "chief_accountant",
+          "other"
+        ],
+        "title": "UserRole",
+        "type": "string"
+      },
+      "Why": {
+        "additionalProperties": false,
+        "properties": {
+          "chips": {
+            "items": {
+              "$ref": "#/components/schemas/WhyChip"
+            },
+            "title": "Chips",
+            "type": "array"
+          },
+          "score": {
+            "$ref": "#/components/schemas/RelevanceScore"
+          }
+        },
+        "required": [
+          "score",
+          "chips"
+        ],
+        "title": "Why",
+        "type": "object"
+      },
+      "WhyChip": {
+        "additionalProperties": false,
+        "properties": {
+          "feature_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Feature Keys",
+            "type": "array"
+          },
+          "term": {
+            "enum": [
+              "exposure",
+              "sector",
+              "counterparties",
+              "region",
+              "importance",
+              "bank",
+              "freshness",
+              "user",
+              "penalty"
+            ],
+            "title": "Term",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 80,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term",
+          "text",
+          "feature_keys"
+        ],
+        "title": "WhyChip",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Компания и роль берутся только из сессии. Вход — httpOnly-cookie `orientir_session`; изменяющие запросы требуют заголовок `X-CSRF-Token` (значение отдаёт `/api/me`). Ошибки: `{\"error\": {\"code\", \"message\", \"details\"}}`.",
+    "title": "Ориентир API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/admin/llm/usage": {
+      "get": {
+        "operationId": "llm_usage_api_admin_llm_usage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmUsage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Расходы на модели за сутки",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/quality": {
+      "get": {
+        "operationId": "quality_api_admin_quality_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Quality"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Метрики качества",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/sources": {
+      "get": {
+        "operationId": "sources_api_admin_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceHealth"
+                  },
+                  "title": "Response Sources Api Admin Sources Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Здоровье сбора новостей",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/theses": {
+      "get": {
+        "operationId": "theses_api_admin_theses_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ThesisItem"
+                  },
+                  "title": "Response Theses Api Admin Theses Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Тезисы банка для вычитки",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/theses/{thesis_id}": {
+      "patch": {
+        "operationId": "verify_thesis_api_admin_theses__thesis_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thesis_id",
+            "required": true,
+            "schema": {
+              "title": "Thesis Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThesisVerify"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThesisItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Отметить тезис верным или неверным",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/admin/tool-calls": {
+      "get": {
+        "operationId": "tool_calls_api_admin_tool_calls_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolCallLog"
+                  },
+                  "title": "Response Tool Calls Api Admin Tool Calls Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Журнал вызовов инструментов",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Войти",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          }
+        },
+        "summary": "Выйти",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/bank/docs/{doc_id}/page/{page}": {
+      "get": {
+        "operationId": "bank_page_api_bank_docs__doc_id__page__page__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Страница документа банка"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Страница материала банка картинкой",
+        "tags": [
+          "bank"
+        ]
+      }
+    },
+    "/api/chat": {
+      "post": {
+        "operationId": "chat_api_chat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AgentStep"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ChatAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ],
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Поток SSE: `step` (AgentStep) …, `answer` (ChatAnswer), `done`; при сбое `error` и `done`. chat_id задаёт клиент; история в MOCK не хранится."
+          },
+          "401": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Вопрос по событию или ленте",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/compare": {
+      "get": {
+        "operationId": "compare_api_compare_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "event",
+            "required": true,
+            "schema": {
+              "title": "Event",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "a",
+            "required": true,
+            "schema": {
+              "title": "A",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "b",
+            "required": true,
+            "schema": {
+              "title": "B",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Compare"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Одно событие для двух компаний",
+        "tags": [
+          "compare"
+        ]
+      }
+    },
+    "/api/demo/switch": {
+      "post": {
+        "operationId": "demo_switch_api_demo_switch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoSwitch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Выбрать клиента и роль для показа",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/events/{event_id}": {
+      "get": {
+        "operationId": "event_detail_api_events__event_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Карточка события, публикации, рынок и позиция банка",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/events/{event_id}/insight": {
+      "post": {
+        "operationId": "start_insight_api_events__event_id__insight_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsightStart"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Запросить разбор: из кэша или запуск агента",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/events/{event_id}/why": {
+      "get": {
+        "operationId": "why_api_events__event_id__why_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Why"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Почему событие показано или не показано",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/expert/reviews": {
+      "get": {
+        "operationId": "review_queue_api_expert_reviews_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewQueueItem"
+                  },
+                  "title": "Response Review Queue Api Expert Reviews Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Очередь эксперта",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "post": {
+        "operationId": "expert_review_api_expert_reviews_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Решение эксперта по разбору",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/feed": {
+      "get": {
+        "operationId": "feed_api_feed_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "default": "week"
+            }
+          },
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/FeedFilter",
+              "default": "all"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9_]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Factor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Лента событий с «почему у вас»",
+        "tags": [
+          "feed"
+        ]
+      }
+    },
+    "/api/feedback": {
+      "post": {
+        "operationId": "feedback_api_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Отзыв: полезно или мимо",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/highlights": {
+      "get": {
+        "operationId": "highlights_api_highlights_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FeedItem"
+                  },
+                  "title": "Response Highlights Api Highlights Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Три события для виджета",
+        "tags": [
+          "feed"
+        ]
+      }
+    },
+    "/api/insights/{insight_id}/stream": {
+      "get": {
+        "operationId": "stream_insight_api_insights__insight_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "insight_id",
+            "required": true,
+            "schema": {
+              "title": "Insight Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AgentStep"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InsightResult"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorBody"
+                    }
+                  ],
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Поток SSE: `step` (AgentStep) …, `insight` (InsightResult), `done`; при сбое `error` и `done`. Кадры нумеруются с 1; заголовок Last-Event-ID возобновляет поток после указанного кадра."
+          },
+          "401": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Ход разбора потоком",
+        "tags": [
+          "insights"
+        ]
+      }
+    },
+    "/api/insights/{insight_id}/trace": {
+      "get": {
+        "operationId": "trace_api_insights__insight_id__trace_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "insight_id",
+            "required": true,
+            "schema": {
+              "title": "Insight Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Трасса агента",
+        "tags": [
+          "insights"
+        ]
+      }
+    },
+    "/api/market/{series}": {
+      "get": {
+        "operationId": "market_api_market__series__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "series",
+            "required": true,
+            "schema": {
+              "title": "Series",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 90,
+              "maximum": 365,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSeries"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Ряд для графика",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/me": {
+      "get": {
+        "operationId": "me_api_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          }
+        },
+        "summary": "Кто я",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/news/check": {
+      "post": {
+        "operationId": "check_news_api_news_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewsCheck"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsCheckResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Проверить свою новость; ход разбора — по /insights/{id}/stream",
+        "tags": [
+          "news"
+        ]
+      }
+    },
+    "/api/profile": {
+      "get": {
+        "operationId": "get_profile_api_profile_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Не найдено"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          }
+        },
+        "summary": "Профиль компании",
+        "tags": [
+          "profile"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_profile_api_profile_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfilePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Поправить признак профиля",
+        "tags": [
+          "profile"
+        ]
+      }
+    },
+    "/api/profile/text": {
+      "post": {
+        "operationId": "profile_text_api_profile_text_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileText"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileTextPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет сессии"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Нет прав или неверный X-CSRF-Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Некорректный запрос"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Маршрут ещё на заглушке"
+          }
+        },
+        "summary": "Описать бизнес словами: чувствительности до и после",
+        "tags": [
+          "profile"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # тот же тег, что в deploy/docker-compose.yml
+        image: pgvector/pgvector:0.8.2-pg16
+        env:
+          POSTGRES_USER: orientir
+          POSTGRES_PASSWORD: orientir
+          POSTGRES_DB: orientir_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U orientir -d orientir_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://orientir:orientir@localhost:5432/orientir_test
+      # настройки обязательны для создания приложения; в сеть и в БД эти значения не ходят
+      DATABASE_URL: postgresql://orientir:orientir@localhost:5432/orientir
+      DEMO_PASSWORD: ci-placeholder
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.20"
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: Проверить, что тесты с БД не будут пропущены
+        run: test -n "$TEST_DATABASE_URL"
+      - name: Тесты
+        # shell: bash включает pipefail: упавший pytest не прячется за tee
+        shell: bash
+        run: |
+          uv run pytest -rs 2>&1 | tee pytest.log
+          if grep -q '^SKIPPED' pytest.log; then
+            echo "::error::есть пропущенные тесты: тесты с БД обязаны выполняться в CI"
+            exit 1
+          fi
+      - run: uv run orientir openapi --check
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: cp deploy/.env.example deploy/.env
+      - run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env build api
+      - name: Размер образа
+        run: |
+          size=$(docker image inspect orientir --format '{{.Size}}')
+          echo "Размер образа orientir: $((size / 1024 / 1024)) МБ"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # hashFiles в условии задачи недоступна, поэтому наличие веба проверяем шагом
+      - name: Есть ли web/package.json
+        id: web
+        run: echo "exists=$([ -f web/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.web.outputs.exists == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - if: steps.web.outputs.exists == 'true'
+        run: npm ci --prefix web
+      - if: steps.web.outputs.exists == 'true'
+        run: npm --prefix web run build

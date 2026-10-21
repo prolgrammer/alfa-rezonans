@@ -1,0 +1,29 @@
+[
+  {
+    "id": "cbr_press",
+    "name": "Банк России: пресс-релизы",
+    "kind": "official",
+    "enabled": true,
+    "last_ok_at": "2026-10-20T11:50:00+03:00",
+    "last_error": null,
+    "items_24h": 6
+  },
+  {
+    "id": "business_wire",
+    "name": "Деловой вестник",
+    "kind": "news",
+    "enabled": true,
+    "last_ok_at": "2026-10-20T11:55:00+03:00",
+    "last_error": null,
+    "items_24h": 142
+  },
+  {
+    "id": "industry_digest",
+    "name": "Промышленные ведомости",
+    "kind": "industry",
+    "enabled": false,
+    "last_ok_at": "2026-10-18T08:10:00+03:00",
+    "last_error": "robots.txt запрещает сбор",
+    "items_24h": 0
+  }
+]

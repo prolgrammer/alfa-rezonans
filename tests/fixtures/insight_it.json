@@ -1,0 +1,195 @@
+{
+  "insight": {
+    "headline": "Доходность размещения свободных денег сохранится дольше, чем ожидалось",
+    "impact": {"direction": "opportunity", "strength": "medium", "horizon": "months"},
+    "what_happened": [
+      {
+        "id": "s1",
+        "text": "Совет директоров Банка России 11 сентября сохранил ключевую ставку на уровне 14,0% годовых.",
+        "origin": "fact",
+        "evidence": ["E1", "E5"],
+        "confidence": "high"
+      },
+      {
+        "id": "s2",
+        "text": "Это первая пауза после десяти последовательных снижений, которые начались в июне 2025 года.",
+        "origin": "fact",
+        "evidence": ["E2"],
+        "confidence": "high"
+      }
+    ],
+    "assumptions": [
+      {
+        "id": "s3",
+        "text": "Участники рынка ожидают снижения ставки не раньше первого квартала 2027 года.",
+        "origin": "fact",
+        "evidence": ["E3"],
+        "confidence": "medium"
+      }
+    ],
+    "why_it_matters": [
+      {
+        "id": "s4",
+        "text": "Пауза в снижении ставки сохраняет высокий доход на депозитах, на которых компания размещает свободные деньги.",
+        "origin": "model",
+        "evidence": ["E1", "E6"],
+        "confidence": "medium",
+        "feature_keys": ["products.DEP"]
+      },
+      {
+        "id": "s5",
+        "text": "Кредитных продуктов банка у компании нет, поэтому высокая ставка не увеличивает её расходы на проценты.",
+        "origin": "model",
+        "evidence": ["E1", "E7"],
+        "confidence": "medium",
+        "feature_keys": ["products.LOA"]
+      }
+    ],
+    "risks": [
+      {
+        "id": "s6",
+        "text": "Когда ставку начнут снижать, доход на размещённые деньги станет меньше.",
+        "origin": "model",
+        "evidence": ["E3", "E6"],
+        "confidence": "medium"
+      }
+    ],
+    "opportunities": [
+      {
+        "id": "s7",
+        "text": "Пока ставка высока, свободные деньги можно разместить на более длинный срок и закрепить доходность.",
+        "origin": "model",
+        "evidence": ["E3", "E6"],
+        "confidence": "low"
+      }
+    ],
+    "watch": [
+      {
+        "id": "s8",
+        "text": "Следующее заседание Совета директоров по ключевой ставке запланировано на 24 октября 2026 года.",
+        "origin": "fact",
+        "evidence": ["E8"],
+        "confidence": "high"
+      }
+    ],
+    "scenarios": [
+      {
+        "condition": "Если Банк России снизит ставку 24 октября",
+        "outcome": "ставки по депозитам начнут снижаться, и разместить деньги на нынешних условиях станет нельзя",
+        "evidence": ["E1", "E3"]
+      }
+    ],
+    "actions": [
+      {
+        "id": "s9",
+        "text": "Сравнить условия вкладов на разные сроки и решить, какую часть свободных денег закрепить сейчас.",
+        "origin": "model",
+        "evidence": ["E1", "E6"],
+        "confidence": "medium"
+      }
+    ],
+    "questions": [
+      "Какая часть денег на счетах нужна для текущих платежей, а какая свободна?",
+      "На какой срок выгодно закрепить доходность, если ставку снизят в 2027 году?"
+    ],
+    "bank_view": {
+      "statements": [
+        {
+          "id": "s10",
+          "text": "Банк оценивает решение 11 сентября как сохранение ставки на 14,0% при более жёсткой риторике регулятора.",
+          "origin": "bank",
+          "evidence": ["E4"],
+          "confidence": "high"
+        }
+      ],
+      "as_of": "2026-09-12",
+      "match": "partly",
+      "gap": null
+    },
+    "bank_offer": null,
+    "confidence": "medium",
+    "limitations": [
+      "В профиле нет данных о сумме свободных денег на счетах и о сроках текущих размещений."
+    ]
+  },
+  "evidence": [
+    {
+      "id": "E1",
+      "type": "news",
+      "text": "Совет директоров Банка России 11 сентября 2026 года принял решение сохранить ключевую ставку на уровне 14,0% годовых.",
+      "ref": {
+        "kind": "news",
+        "event_id": 1,
+        "raw_item_id": 101,
+        "url": "https://cbr.example.test/press/2026-09-11-key-rate",
+        "source_name": "Банк России",
+        "published_at": "2026-09-11T13:30:00+03:00"
+      }
+    },
+    {
+      "id": "E2",
+      "type": "news",
+      "text": "Это первая пауза после десяти последовательных снижений, которые начались в июне 2025 года.",
+      "ref": {
+        "kind": "news",
+        "event_id": 1,
+        "raw_item_id": 101,
+        "url": "https://cbr.example.test/press/2026-09-11-key-rate",
+        "source_name": "Банк России",
+        "published_at": "2026-09-11T13:30:00+03:00"
+      }
+    },
+    {
+      "id": "E3",
+      "type": "news",
+      "text": "Участники рынка ожидают, что ставку снизят не раньше первого квартала 2027 года.",
+      "ref": {
+        "kind": "news",
+        "event_id": 1,
+        "raw_item_id": 102,
+        "url": "https://delovoy-vestnik.example.test/economy/cbr-pause-14",
+        "source_name": "Деловой вестник",
+        "published_at": "2026-09-11T14:10:00+03:00"
+      }
+    },
+    {
+      "id": "E4",
+      "type": "bank",
+      "text": "Ключевая ставка ЦБ РФ: ставка без изменения на 14,0%, риторика стала жестче",
+      "ref": {"kind": "bank", "doc_id": 1, "page": 1, "thesis_id": 1, "published_on": "2026-09-12"}
+    },
+    {
+      "id": "E5",
+      "type": "market",
+      "text": "Ключевая ставка Банка России на 11.09.2026: 14,0%.",
+      "ref": {"kind": "market", "series": "cbr_key_rate", "date": "2026-09-11"}
+    },
+    {
+      "id": "E6",
+      "type": "feature",
+      "text": "Депозиты в банке: есть.",
+      "ref": {"kind": "feature", "feature_key": "products.DEP", "source": "csv:CL_PRODUCT_DEP_MARK"}
+    },
+    {
+      "id": "E7",
+      "type": "feature",
+      "text": "Кредитные продукты банка: нет.",
+      "ref": {"kind": "feature", "feature_key": "products.LOA", "source": "csv:CL_PRODUCT_LOA_MARK"}
+    },
+    {
+      "id": "E8",
+      "type": "news",
+      "text": "Следующее заседание Совета директоров по ключевой ставке запланировано на 24 октября 2026 года.",
+      "ref": {
+        "kind": "news",
+        "event_id": 1,
+        "raw_item_id": 101,
+        "url": "https://cbr.example.test/press/2026-09-11-key-rate",
+        "source_name": "Банк России",
+        "published_at": "2026-09-11T13:30:00+03:00"
+      }
+    }
+  ],
+  "mode": "full",
+  "checks": {"statements_total": 10, "passed_first_try": 10, "removed": 0, "revisions": 0}
+}
