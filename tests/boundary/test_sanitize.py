@@ -1,10 +1,12 @@
+import subprocess
 import unicodedata
 
+from app.settings import REPO_ROOT
 from app.text.sanitize import sanitize
 
 
 def test_removes_invisible_and_control_characters():
-    assert sanitize("при​вет‮ \x07мир﻿") == "привет мир"
+    assert sanitize("при\u200bвет\u202e \x07мир\ufeff") == "привет мир"
 
 
 def test_keeps_newline_and_tab():
@@ -26,11 +28,11 @@ def test_removes_unicode_tag_characters():
 
 
 def test_removes_bidi_isolates():
-    assert sanitize("a⁦b⁧c⁨d⁩e") == "abcde"
+    assert sanitize("a\u2066b\u2067c\u2068d\u2069e") == "abcde"
 
 
 def test_removes_private_use_and_unassigned():
-    assert sanitize("ab\U0010fffdc͸d") == "abcd"
+    assert sanitize("a\ue000b\U0010fffdc\u0378d") == "abcd"
 
 
 def test_removes_lone_surrogates():
@@ -44,11 +46,29 @@ def test_removes_variation_selectors():
 
 
 def test_hidden_char_between_base_and_accent_does_not_block_composition():
-    assert sanitize("e​́") == "é"
+    assert sanitize("e\u200b́") == "é"
 
 
 def test_result_is_nfkc_and_idempotent():
-    mixed = "e​́ ﬁ ①⁦ \U000e0041 Ёж\ud800️"
+    mixed = "e\u200b́ ﬁ ①\u2066\ue000 \U000e0041 Ёж\ud800️"
     once = sanitize(mixed)
     assert sanitize(once) == once
     assert unicodedata.normalize("NFKC", once) == once
+
+
+def test_tracked_text_files_have_no_raw_invisible_characters():
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.py", "*.md", "*.yml", "*.yaml", "*.sql", "*.toml"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=REPO_ROOT,
+        check=True,
+    ).stdout.split()
+    offenders = []
+    for name in tracked:
+        for number, line in enumerate((REPO_ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
+            if any(unicodedata.category(ch) in {"Cf", "Co", "Cn", "Cs", "Cc"} for ch in line):
+                offenders.append(f"{name}:{number}")
+    # скрытые символы в исходниках невидимы ревьюеру: их записывают как \uXXXX
+    assert not offenders
