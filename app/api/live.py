@@ -22,6 +22,7 @@ from app.api.schemas import (
     ReviewIn,
     ReviewQueueItem,
     SourceHealth,
+    TaskUsage,
     ToolCallLog,
     Trace,
     Why,
@@ -39,6 +40,9 @@ from app.contracts import (
     SessionCtx,
     ThesisItem,
 )
+from app.db import get_pool
+from app.llm import gw
+from app.llm.store import usage_since
 from app.rank.feed import explain, highlights, rank_feed
 
 
@@ -125,7 +129,15 @@ class LiveBackend:
         not_implemented("DQ-14")
 
     async def llm_usage(self) -> LlmUsage:
-        not_implemented("ML-3")
+        state = await gw.budget_state()
+        rows = await usage_since(await get_pool(), state.since)
+        return LlmUsage(
+            day=state.day,
+            budget_rub=max(state.limit_rub, 0.0),
+            spent_rub=round(state.spent_rub, 2),
+            ladder_step=state.step,
+            by_task=[TaskUsage.model_validate(row) for row in rows],
+        )
 
     async def tool_calls(self) -> list[ToolCallLog]:
         not_implemented("ML-10")

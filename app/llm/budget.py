@@ -1,14 +1,56 @@
 import contextlib
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta, timezone
 
 from app.llm.errors import BudgetExceeded
 from app.llm.store import Store
+from app.llm.types import Lane
 
 SYNC_EVERY_S = 60.0
 # Москва без перехода на летнее время с 2014 года: фиксированное смещение не зависит от tzdata в образе.
 MSK = timezone(timedelta(hours=3), "MSK")
+
+# Лестница деградации (ML-3): доля дневного лимита → ступень.
+LADDER: tuple[tuple[float, int], ...] = ((1.0, 4), (0.95, 3), (0.85, 2), (0.70, 1))
+WARM_TASKS = frozenset({"insight_plan", "insight_write", "insight_critic"})
+# массовые разовые прогоны: им не место в последней трети бюджета, остаток — интерактиву
+BULK_TASKS = frozenset({"bank_theses", "chart_read", "eval_judge"})
+
+
+def ladder_step(spent_rub: float, limit_rub: float) -> int:
+    if limit_rub <= 0:
+        return 4
+    share = spent_rub / limit_rub
+    return next((step for threshold, step in LADDER if share >= threshold), 0)
+
+
+def ladder_block(step: int, task: str, lane: Lane, *, priority: bool = False) -> str | None:
+    """Почему вызов запрещён на этой ступени, или None, если разрешён."""
+    background = lane == "background"
+    if step >= 4:
+        return "лимит исчерпан, разбор без LLM"
+    if step >= 3 and background:
+        return "95%: только интерактивные вызовы"
+    if step >= 3 and task == "insight_critic":
+        return "95%: разбор без критика"
+    if step >= 2 and task == "rank_judge":
+        return "85%: судья ленты выключен"
+    if step >= 2 and task == "event_card" and background and not priority:
+        return "85%: карточки только для официальных источников"
+    if step >= 1 and background and task in WARM_TASKS | BULK_TASKS:
+        return "70%: прогрев и массовые прогоны остановлены"
+    return None
+
+
+@dataclass(frozen=True)
+class BudgetState:
+    day: date
+    limit_rub: float
+    spent_rub: float
+    step: int
+    since: datetime  # начало суток бюджета, UTC
 
 
 class Budget:
@@ -59,13 +101,37 @@ class Budget:
         ):
             raise BudgetExceeded(
                 f"дневной бюджет LLM исчерпан ({self.spent:.2f} из {self.limit_rub:.0f} ₽, "
-                f"вызов до {reserve_rub:.2f} ₽): {task}"
+                f"вызов до {reserve_rub:.2f} ₽): {task}",
+                step=self.step,
             )
         self.held += reserve_rub
         try:
             yield
         finally:
             self.held -= reserve_rub
+
+    @property
+    def step(self) -> int:
+        # по факту, без резервов: резерв — оценка сверху, ступень не должна мигать от параллельных вызовов
+        self._roll()
+        return ladder_step(self.spent, self.limit_rub)
+
+    def check(self, task: str, lane: Lane, essential: bool, *, priority: bool = False) -> None:
+        if essential:
+            return
+        step = self.step
+        reason = ladder_block(step, task, lane, priority=priority)
+        if reason is not None:
+            raise BudgetExceeded(
+                f"бюджет LLM, ступень {step} ({self.spent:.2f} из {self.limit_rub:.0f} ₽): {reason} — {task}",
+                step=step,
+            )
+
+    def state(self) -> BudgetState:
+        self._roll()
+        return BudgetState(
+            self._day, self.limit_rub, round(self.spent, 4), self.step, self._day_start().astimezone(UTC)
+        )
 
     def add(self, cost_rub: float) -> None:
         self._roll()

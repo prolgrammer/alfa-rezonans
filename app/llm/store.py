@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from psycopg import errors as pg_errors
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
@@ -144,6 +145,27 @@ class PgStore:
             self._fail("spent_since", exc)
             return None
         return float(row["spent"] if isinstance(row, dict) else row[0])
+
+
+# Медиана задержки — без ответов из кэша: их 0 мс исказили бы задержку модели.
+_USAGE_SQL = """
+SELECT task, model, count(*)::int AS calls, COALESCE(sum(cost_rub), 0)::float AS cost_rub,
+       count(fallback_from)::int AS fallbacks, count(error)::int AS errors,
+       COALESCE(round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ms) FILTER (WHERE NOT cached)), 0)::int
+           AS p50_ms
+FROM llm_calls
+WHERE created_at >= %s
+GROUP BY task, model
+ORDER BY cost_rub DESC, task, model
+"""
+
+
+async def usage_since(pool: AsyncConnectionPool, start: datetime) -> list[dict[str, Any]]:
+    """Расход по задачам и моделям с начала суток бюджета — для админки (ML-3, F9)."""
+    async with asyncio.timeout(DB_TIMEOUT_S), pool.connection(timeout=DB_TIMEOUT_S) as conn:
+        conn.row_factory = dict_row
+        cur = await conn.execute(_USAGE_SQL, (start,))
+        return list(await cur.fetchall())
 
 
 class LazyStore:

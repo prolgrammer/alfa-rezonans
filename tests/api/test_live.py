@@ -67,3 +67,38 @@ async def test_live_backend_without_functions_is_not_implemented(call):
         await call(LiveBackend())
     assert caught.value.status == 503
     assert caught.value.body.error.code == "not_implemented"
+
+
+async def test_live_llm_usage(monkeypatch):
+    from datetime import UTC, date, datetime
+
+    import app.api.live as live_module
+    from app.llm.budget import BudgetState
+
+    since = datetime(2026, 10, 20, 21, 0, tzinfo=UTC)
+    seen = {}
+
+    class FakeGateway:
+        async def budget_state(self):
+            return BudgetState(date(2026, 10, 21), 480.0, 343.456, 1, since)
+
+    async def fake_pool():
+        return "pool"
+
+    async def fake_usage(pool, start):
+        seen["args"] = (pool, start)
+        row = {"task": "chat", "model": "qwen3.6-35b-a3b", "calls": 2, "cost_rub": 1.5}
+        return [{**row, "fallbacks": 0, "errors": 0, "p50_ms": 700}]
+
+    monkeypatch.setattr(live_module, "gw", FakeGateway())
+    monkeypatch.setattr(live_module, "get_pool", fake_pool)
+    monkeypatch.setattr(live_module, "usage_since", fake_usage)
+    usage = await LiveBackend().llm_usage()
+    assert (usage.day, usage.budget_rub, usage.spent_rub, usage.ladder_step) == (
+        date(2026, 10, 21),
+        480.0,
+        343.46,
+        1,
+    )
+    assert [t.task for t in usage.by_task] == ["chat"]
+    assert seen["args"] == ("pool", since)
