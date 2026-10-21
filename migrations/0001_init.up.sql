@@ -328,6 +328,7 @@ CREATE TABLE tool_calls (
     result_chars INTEGER NOT NULL CHECK (result_chars >= 0),
     duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
     ok BOOLEAN NOT NULL,
+    error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (insight_id IS NOT NULL OR chat_id IS NOT NULL)
 );
@@ -370,7 +371,7 @@ CREATE TABLE feedback (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users (id),
     event_id BIGINT NOT NULL REFERENCES events (id),
-    insight_id BIGINT,
+    insight_id BIGINT REFERENCES insights (id),
     verdict TEXT NOT NULL CHECK (verdict IN ('useful', 'miss')),
     reason TEXT CHECK (reason IN ('not_my_topic', 'already_knew', 'factual_error', 'wrong_conclusion')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()

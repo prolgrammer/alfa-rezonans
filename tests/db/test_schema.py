@@ -123,3 +123,22 @@ def test_vector_columns_have_expected_dimension(migrated):
         "JOIN pg_class c ON c.oid = a.attrelid WHERE a.attname = 'embedding' AND c.relkind = 'r'"
     ).fetchall()
     assert dict(rows) == {"events": "vector(384)", "bank_chunks": "vector(384)"}
+
+
+def test_tool_calls_keep_error_text(migrated):
+    columns = {
+        row[0]
+        for row in migrated.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'tool_calls'"
+        ).fetchall()
+    }
+    assert "error" in columns
+
+
+@pytest.mark.parametrize("table", ["feedback", "expert_reviews"])
+def test_insight_id_is_a_foreign_key(migrated, table):
+    rows = migrated.execute(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = %s::regclass AND contype = 'f'",
+        (table,),
+    ).fetchall()
+    assert any("(insight_id)" in r[0] and "REFERENCES insights(id)" in r[0] for r in rows)
