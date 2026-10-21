@@ -8,6 +8,10 @@ from psycopg import conninfo
 # Настройки обязательны для get_settings(); тестам хватает заглушек, в сеть и БД они не ходят.
 os.environ.setdefault("DATABASE_URL", "postgresql://orientir:orientir@localhost:5432/orientir")
 os.environ.setdefault("DEMO_PASSWORD", "test-password")
+# Переменные окружения приоритетнее deploy/.env: без этого тесты подхватили бы живой ключ разработчика
+# и потратили бы деньги.
+os.environ["LLM_API_KEY"] = ""
+os.environ["LLM_FOLDER_ID"] = ""
 
 
 @pytest.fixture

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     llm_base_url: str = ""
     llm_api_key: SecretStr = SecretStr("")
+    llm_folder_id: SecretStr = SecretStr("")
     llm_daily_budget_rub: float = 480
     insight_max_rub: float = 4
     chat_max_rub: float = 1.5

@@ -28,15 +28,15 @@ def copy_first_migration(target: Path) -> None:
 
 
 def test_up_down_up(db_conn):
-    assert migrate_up(db_conn, MIGRATIONS) == [1]
+    assert migrate_up(db_conn, MIGRATIONS) == [1, 2]
     assert migrate_up(db_conn, MIGRATIONS) == []
-    assert applied(db_conn) == [1]
+    assert applied(db_conn) == [1, 2]
 
-    assert migrate_down(db_conn, MIGRATIONS, 1) == [1]
+    assert migrate_down(db_conn, MIGRATIONS, 2) == [2, 1]
     assert public_tables(db_conn) == {"schema_migrations"}
     assert applied(db_conn) == []
 
-    assert migrate_up(db_conn, MIGRATIONS) == [1]
+    assert migrate_up(db_conn, MIGRATIONS) == [1, 2]
 
 
 def test_failed_migration_rolls_back(db_conn, tmp_path):
@@ -69,7 +69,7 @@ def test_down_rolls_back_only_requested_steps(db_conn, tmp_path):
 
 
 def test_discover_real_directory():
-    assert [m.version for m in discover(MIGRATIONS)] == [1]
+    assert [m.version for m in discover(MIGRATIONS)] == [1, 2]
 
 
 def test_discover_rejects_missing_down(tmp_path):
@@ -101,3 +101,18 @@ def test_discover_orders_by_version(tmp_path):
     write_pair(tmp_path, 10, "ten", "SELECT 1;", "SELECT 1;")
     write_pair(tmp_path, 2, "two", "SELECT 1;", "SELECT 1;")
     assert [m.version for m in discover(tmp_path)] == [2, 10]
+
+
+def event_id_column(conn):
+    return conn.execute(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_name = 'llm_calls' AND column_name = 'event_id'"
+    ).fetchone()
+
+
+def test_llm_calls_event_id_column(db_conn):
+    migrate_up(db_conn, MIGRATIONS)
+    assert event_id_column(db_conn) == ("YES",)
+
+    assert migrate_down(db_conn, MIGRATIONS, 1) == [2]
+    assert event_id_column(db_conn) is None
