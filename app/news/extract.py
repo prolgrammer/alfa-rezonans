@@ -92,15 +92,20 @@ async def _filter_batch(batch: list[RawItemIn]) -> list[NewsFilterResult]:
 
 async def news_filter(items: list[RawItemIn]) -> list[NewsFilterResult]:
     results: dict[int, NewsFilterResult] = {}
-    to_model: list[tuple[int, RawItemIn]] = []
+    clean: list[tuple[int, RawItemIn]] = []
+    commanded: list[tuple[int, RawItemIn]] = []
     for index, item in enumerate(items):
-        suspicious = neutralize(_item_text(item)).flags & _QUARANTINE_FLAGS
-        if suspicious:
+        flags = neutralize(_item_text(item)).flags
+        if suspicious := flags & _QUARANTINE_FLAGS:
             reason = "подозрение на инъекцию: " + ", ".join(sorted(suspicious))
             results[index] = _result(item, False, reason)
+        elif Flag.COMMAND in flags:
+            commanded.append((index, item))
         else:
-            to_model.append((index, item))
-    batches = list(batched(to_model, FILTER_BATCH))
+            clean.append((index, item))
+    # публикация с фразой-командой идёт отдельным вызовом: в общей пачке она могла бы повлиять
+    # на ответы по соседним новостям, а одна — только на свой
+    batches = list(batched(clean, FILTER_BATCH)) + [(entry,) for entry in commanded]
     slots = asyncio.Semaphore(FILTER_CONCURRENCY)
 
     async def run(batch: tuple[tuple[int, RawItemIn], ...]) -> list[NewsFilterResult]:

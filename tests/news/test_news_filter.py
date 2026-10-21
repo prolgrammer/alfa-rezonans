@@ -227,8 +227,8 @@ async def test_command_phrases_go_to_the_model_marked(fake):
     results = await news_filter(
         [item(1, real)] + [item(n, r["title"], r["text"]) for n, r in enumerate(rows, 2)]
     )
-    assert [r.reason for r in results] == [f"r{n}" for n in range(1, len(rows) + 2)]
-    assert "[!команда]" in gateway.prompts[0]
+    assert [r.reason for r in results] == ["r1"] * (len(rows) + 1)  # каждая — отдельным вызовом
+    assert all("[!команда] " in call["vars"]["sources"] for call in gateway.calls)
 
 
 async def test_quarantined_items_keep_positions_across_batches(fake):
@@ -371,3 +371,16 @@ def test_dev_cases_are_well_formed():
             published_at="2026-10-20T10:00:00+03:00",
         )
         assert row["why"]
+
+
+async def test_command_items_are_asked_alone(fake):
+    rows = [r for r in INJECTIONS if r["expect_flags"] == ["command"]]
+    gateway = fake()
+    items = [item(n) for n in range(1, 4)] + [
+        item(10 + n, r["title"], r["text"]) for n, r in enumerate(rows[:2])
+    ]
+    results = await news_filter(items)
+    assert sorted(len(numbers(p)) for p in gateway.prompts) == [1, 1, 3]
+    shared = [c["vars"]["sources"] for c in gateway.calls if c["vars"]["count"] == 3]
+    assert len(shared) == 1 and "[!команда] " not in shared[0]
+    assert [r.raw_item_id for r in results] == [i.id for i in items]
