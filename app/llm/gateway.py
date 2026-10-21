@@ -1,33 +1,12 @@
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
-Lane = Literal["background", "interactive"]
+from app.llm.errors import LLMUnavailable
+from app.llm.types import Lane, ToolCallRequest, ToolSpec, ToolStepResult
 
-
-class LLMUnavailable(Exception):
-    """Модель недоступна: потребитель переходит на путь без LLM."""
-
-
-class _Model(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class ToolSpec(_Model):
-    name: str
-    description: str
-    parameters: dict[str, Any]
-
-
-class ToolCallRequest(_Model):
-    name: str
-    args: dict[str, Any]
-
-
-class ToolStepResult(_Model):
-    text: str | None
-    tool_calls: list[ToolCallRequest]
+__all__ = ["Lane", "LLMUnavailable", "ToolCallRequest", "ToolSpec", "ToolStepResult", "Gateway", "gw"]
 
 
 class Gateway:
