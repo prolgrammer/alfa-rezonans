@@ -9,7 +9,7 @@ import psycopg
 import typer
 
 from app.db import MigrationError, close_pool, get_pool, migrate_down, migrate_up
-from app.llm.errors import BudgetExceeded, LLMNotConfigured
+from app.llm.errors import LLMNotConfigured
 from app.settings import REPO_ROOT, get_settings
 
 if TYPE_CHECKING:
@@ -141,7 +141,7 @@ def llm_probe(
 ) -> None:
     """Проверить возможности моделей и записать .models_caps.json."""
     # импорт здесь: шлюз читает конфиг моделей, остальным командам он не нужен
-    from app.llm import probe
+    from app.llm import gateway, probe
     from app.llm.config import load_config
 
     config = load_config(REPO_ROOT / "config" / "models.yaml")
@@ -162,12 +162,6 @@ def llm_probe(
     except LLMNotConfigured as exc:
         typer.echo(f"ошибка: {exc}", err=True)
         raise typer.Exit(1) from exc
-    except probe.ProbeAuthError as exc:
-        typer.echo(f"ошибка: {exc}. Файл возможностей не записан.", err=True)
-        raise typer.Exit(1) from exc
-    except BudgetExceeded as exc:
-        typer.echo(f"ошибка: {exc}. Файл возможностей не записан.", err=True)
-        raise typer.Exit(1) from exc
 
     if result.catalog is None:
         typer.echo("Каталог провайдера: недоступен")
@@ -181,15 +175,18 @@ def llm_probe(
         typer.echo(line)
     total = sum(r.cost_rub for r in result.reports)
     typer.echo(f"Потрачено: {total:.3f} ₽")
-    from app.llm import gateway
-
-    probe.write_caps(gateway.CAPS_FILE, result)
-    typer.echo(f"Записан {gateway.CAPS_FILE.name}")
+    # готовые отчёты пишем и при остановке: деньги на них уже потрачены
+    if result.reports:
+        probe.write_caps(gateway.CAPS_FILE, result)
+        typer.echo(f"Записан {gateway.CAPS_FILE.name}")
     lines = probe.discrepancies(config, result)
     typer.echo("")
     typer.echo("Расхождения с config/models.yaml:" if lines else "Расхождений с config/models.yaml нет")
     for line in lines:
         typer.echo(f"  - {line}")
+    if result.stopped:
+        typer.echo(f"ошибка: прогон остановлен — {result.stopped}", err=True)
+        raise typer.Exit(1)
 
 
 def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -208,15 +205,17 @@ async def _probe(config: "ModelsConfig", models: list[str]) -> "ProbeResult":
     # и строки llm_calls первых вызовов остались бы в памяти, мимо дневного учёта.
     # Без внешнего таймаута: отмена посреди открытия оставила бы пул с живыми воркерами.
     store: Store
+    typer.echo("Подключаюсь к БД для учёта вызовов…")
     try:
         store = PgStore(await get_pool())
     except Exception as exc:
         typer.echo(f"БД недоступна ({type(exc).__name__}): вызовы probe не попадут в llm_calls", err=True)
         store = MemoryStore()
+    gw = Gateway(config, store=store)
     try:
-        gw = Gateway(config, store=store)
         return await run_probe(gw, models, on_model=lambda r: typer.echo(f"  {r.name}: {r.status}"))
     finally:
+        await gw.aclose()
         await close_pool()
 
 

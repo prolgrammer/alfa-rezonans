@@ -136,7 +136,7 @@ class _Failed(Exception):
 
 @dataclass
 class RawAnswer:
-    """Ответ одной модели без резерва и кэша: результат или ошибка провайдера (текст замаскирован)."""
+    """Ответ одной модели без кэша и резервных моделей: результат или ошибка (текст замаскирован)."""
 
     result: ChatResult | None
     error: ProviderError | None
@@ -376,12 +376,26 @@ class Gateway:
                     result = await provider.chat(body, deadline=deadline)
         except ProviderError as exc:
             error = exc
-            row.error = str(exc)[:ERROR_LIMIT]
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            # неожиданный сбой клиента тоже должен оставить строку llm_calls и замаскированный текст
+            log.warning("шлюз: неожиданная ошибка probe модели %s (%s)", model, type(exc).__name__)
+            error = ProviderError(
+                provider.mask(f"{type(exc).__name__}: {exc}")[:ERROR_LIMIT], model_fault=False
+            )
         else:
             usage.tokens_in, usage.tokens_out = result.tokens_in, result.tokens_out
+        if error is not None:
+            row.error = str(error)[:ERROR_LIMIT]
         self._charge(row, mcfg, usage)
         await self._finish(row, started)
         return RawAnswer(result, error, row.ms, row.cost_rub)
+
+    async def aclose(self) -> None:
+        """Закрыть HTTP-клиенты провайдеров: нужно коротким процессам вроде CLI."""
+        for provider in self._providers.values():
+            await provider.aclose()
 
     def _secrets(self) -> tuple[str, str]:
         settings = self._settings or get_settings()

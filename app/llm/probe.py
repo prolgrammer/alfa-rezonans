@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import re
 import statistics
 import struct
@@ -14,13 +15,18 @@ from pydantic import BaseModel, ValidationError
 
 from app.llm.budget import MSK
 from app.llm.config import ModelsConfig
-from app.llm.gateway import IMAGE_TOKENS, Gateway, RawAnswer
+from app.llm.errors import BudgetExceeded
+from app.llm.gateway import IMAGE_TOKENS, Gateway, RawAnswer, llm_scope
 from app.llm.jsonmode import parse_json, strict_schema
 from app.llm.provider import BadRequest, estimate_tokens
 
 CAPS: tuple[str, ...] = ("json_schema", "json_object", "tools", "vision")
 CALLS_PER_MODEL = 8  # simple ×3, reasoning_off, json_schema, json_object, tools, vision
 NOTE_LIMIT = 160
+# «Париж» — меньше 10 токенов. Больше 40 без текста рассуждений — провайдер их скрыл;
+# до 15 — рассуждений не было; между — не знаем.
+HIDDEN_REASONING_TOKENS = 40
+NO_REASONING_TOKENS = 15
 
 Status = Literal["ok", "unavailable", "error"]
 
@@ -50,12 +56,12 @@ _PARIS = ("париж", "paris")
 _RED = ("красн", "red")
 _GREEN = ("зел", "green")
 _UNKNOWN_MODEL_RE = re.compile(
-    r"model.*(not found|not exist|unknown|не найден)|не найдена модель", re.IGNORECASE | re.DOTALL
+    r"model[^\n]{0,80}?(not found|not exist|unknown)|модель[^\n]{0,80}?не найдена", re.IGNORECASE
 )
 
 
 class ProbeAuthError(Exception):
-    """Провайдер отверг ключ (401/403): дальше проверять бессмысленно."""
+    """Провайдер отверг ключ (401): дальше проверять бессмысленно."""
 
 
 class _Capital(BaseModel):
@@ -130,6 +136,8 @@ class ModelReport:
 class ProbeResult:
     catalog: list[str] | None
     reports: list[ModelReport]
+    # прогон остановлен (ключ отвергнут, кончился бюджет): готовые отчёты всё равно пишутся
+    stopped: str | None = None
 
 
 def _contains(text: str, words: Iterable[str]) -> bool:
@@ -155,21 +163,45 @@ def _check(answer: RawAnswer, ok: bool | None, note: str = "") -> Check:
 
 
 def _failure(answer: RawAnswer) -> Check:
-    """Ошибка провайдера: 400 — возможности нет, временный сбой — неизвестно."""
+    """Ошибка провайдера: запрос отвергнут (4xx) — возможности нет; временный сбой — неизвестно."""
     error = answer.error
     assert error is not None
-    if error.status in (401, 403):
+    status = error.status
+    if status == 401:
         raise ProbeAuthError(f"провайдер отверг ключ: {error}")
-    if isinstance(error, BadRequest):
+    # 403 после удачного simple — про доступ, а не про возможность; 408 и 429 — временные
+    rejected = status is not None and 400 <= status < 500 and status not in (403, 408, 429)
+    if isinstance(error, BadRequest) or rejected:
         return _check(answer, False, str(error))
     return _check(answer, None, str(error))
 
 
 def _unknown_model(answer: RawAnswer) -> bool:
+    # 403 на первом вызове — модель не подключена каталогу: для неё это то же, что «не найдена»
     error = answer.error
     return error is not None and (
-        error.status == 404 or (error.status == 400 and bool(_UNKNOWN_MODEL_RE.search(str(error))))
+        error.status in (403, 404) or (error.status == 400 and bool(_UNKNOWN_MODEL_RE.search(str(error))))
     )
+
+
+def _truncated(answer: RawAnswer, check: Check) -> Check:
+    """Ответ оборван по max_tokens: это сбой прогона, а не отсутствие возможности."""
+    if check.ok is False and answer.result is not None and answer.result.finish_reason == "length":
+        check.ok = None
+        check.note = _short(f"ответ оборван по max_tokens: {check.note}")
+    return check
+
+
+def _reasons(answer: RawAnswer) -> bool | None:
+    result = answer.result
+    assert result is not None
+    if result.reasoning or (not result.text.strip() and result.finish_reason == "length"):
+        return True
+    if result.tokens_out > HIDDEN_REASONING_TOKENS:
+        return True
+    if result.tokens_out <= NO_REASONING_TOKENS:
+        return False
+    return None
 
 
 def _judge_simple(answer: RawAnswer) -> Check:
@@ -260,21 +292,24 @@ async def probe_model(gw: Gateway, name: str) -> ModelReport:
     if first.result is None:
         report.status, report.note = "error", simple.note
         return report
-    report.reasoning_default = first.result.reasoning or (
-        not first.result.text.strip() and first.result.finish_reason == "length"
-    )
+    report.reasoning_default = _reasons(first)
 
     off = await gw.raw_call(name, _user(SIMPLE_PROMPT), reasoning_off=True)
     report.checks["reasoning_off"] = _judge_simple(off)
     if off.result is not None:
-        report.reasoning_off_param = True
-        if off.result.reasoning:
-            report.checks["reasoning_off"].note = _short("параметр принят, но модель всё равно рассуждала")
+        # параметр принят, но рассуждений не погасил — для шлюза это то же, что не принят
+        report.reasoning_off_param = _reasons(off) is not True
+        if not report.reasoning_off_param:
+            check = report.checks["reasoning_off"]
+            check.note = _short(f"параметр принят, но модель рассуждала. {check.note}")
     elif isinstance(off.error, BadRequest):
         report.reasoning_off_param = False
 
-    # дальше — режим, в котором модель будет звать шлюз
-    quiet = bool(report.reasoning_default and report.reasoning_off_param)
+    # дальше — режим, в котором модель будет звать шлюз; не знаем, рассуждает ли, — как в конфиге
+    quiet = bool(report.reasoning_off_param) and (
+        report.reasoning_default is True
+        or (report.reasoning_default is None and mcfg.reasoning_off == "reasoning_effort")
+    )
     runs = [off if quiet else first]
     for _ in range(2):
         runs.append(await gw.raw_call(name, _user(SIMPLE_PROMPT), reasoning_off=quiet))
@@ -283,18 +318,15 @@ async def probe_model(gw: Gateway, name: str) -> ModelReport:
     times = [r.ms for r in runs if r.result is not None]
     report.latency_ms = int(statistics.median(times)) if times else None
 
-    report.checks["json_schema"] = _judge_schema(
-        await gw.raw_call(name, _user(SCHEMA_PROMPT), response_format=_schema_format(), reasoning_off=quiet)
-    )
-    report.checks["json_object"] = _judge_object(
-        await gw.raw_call(
-            name, _user(OBJECT_PROMPT), response_format={"type": "json_object"}, reasoning_off=quiet
-        )
-    )
-    report.checks["tools"] = _judge_tools(
-        await gw.raw_call(name, _user(TOOLS_PROMPT), tools=TOOLS, reasoning_off=quiet)
-    )
-    report.checks["vision"] = _judge_vision(await gw.raw_call(name, _vision_messages(), reasoning_off=quiet))
+    checks: list[tuple[str, Callable[[RawAnswer], Check], list[dict[str, Any]], dict[str, Any]]] = [
+        ("json_schema", _judge_schema, _user(SCHEMA_PROMPT), {"response_format": _schema_format()}),
+        ("json_object", _judge_object, _user(OBJECT_PROMPT), {"response_format": {"type": "json_object"}}),
+        ("tools", _judge_tools, _user(TOOLS_PROMPT), {"tools": TOOLS}),
+        ("vision", _judge_vision, _vision_messages(), {}),
+    ]
+    for cap, judge, messages, extra in checks:
+        answer = await gw.raw_call(name, messages, reasoning_off=quiet, **extra)
+        report.checks[cap] = _truncated(answer, judge(answer))
     report.caps = final_caps(mcfg.caps, report.checks)
     return report
 
@@ -309,14 +341,20 @@ async def run_probe(
         listed = await provider.list_models()
         if listed is not None:
             catalog = [*(catalog or []), *(provider.mask(m) for m in listed)]
-    reports = []
-    # по очереди: параллельные вызовы исказили бы задержку
-    for name in models:
-        report = await probe_model(gw, name)
-        reports.append(report)
-        if on_model is not None:
-            on_model(report)
-    return ProbeResult(catalog, reports)
+    result = ProbeResult(catalog, [])
+    # один trace_id на прогон: его стоимость — один запрос к llm_calls
+    with llm_scope(trace_id="probe-" + datetime.now(MSK).strftime("%Y%m%d-%H%M%S")):
+        # по очереди: параллельные вызовы исказили бы задержку
+        for name in models:
+            try:
+                report = await probe_model(gw, name)
+            except (ProbeAuthError, BudgetExceeded) as exc:
+                result.stopped = str(exc)
+                break
+            result.reports.append(report)
+            if on_model is not None:
+                on_model(report)
+    return result
 
 
 def _model_name(uri_or_id: str) -> str:
@@ -364,8 +402,9 @@ def estimate(config: ModelsConfig, models: list[str]) -> list[tuple[str, int, fl
     return rows
 
 
-def _report_json(report: ModelReport) -> dict[str, Any]:
+def _report_json(report: ModelReport, probed_at: str) -> dict[str, Any]:
     return {
+        "probed_at": probed_at,
         "uri": report.uri,
         "status": report.status,
         "caps": report.caps,
@@ -396,15 +435,16 @@ def write_caps(path: Path, result: ProbeResult, now: datetime | None = None) -> 
             models = previous["models"]
     except (OSError, ValueError):
         pass
+    probed_at = (now or datetime.now(MSK)).isoformat(timespec="seconds")
     for report in result.reports:
-        models[report.name] = _report_json(report)
-    data: dict[str, Any] = {
-        "probed_at": (now or datetime.now(MSK)).isoformat(timespec="seconds"),
-        "models": dict(sorted(models.items())),
-    }
+        models[report.name] = _report_json(report, probed_at)
+    data: dict[str, Any] = {"probed_at": probed_at, "models": dict(sorted(models.items()))}
     if result.catalog is not None:
         data["catalog"] = sorted(result.catalog)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    # через временный файл: шлюз в соседнем процессе не должен прочитать половину файла
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
 
 
 def discrepancies(config: ModelsConfig, result: ProbeResult) -> list[str]:
@@ -431,6 +471,10 @@ def discrepancies(config: ModelsConfig, result: ProbeResult) -> list[str]:
         unknown = [cap for cap in CAPS if (c := report.checks.get(cap)) is not None and c.ok is None]
         if unknown:
             lines.append(f"{report.name}: не проверено (сбой) — {', '.join(unknown)}; повторить --model")
+        if report.reasoning_default is None:
+            lines.append(
+                f"{report.name}: рассуждает ли по умолчанию — не ясно, смотреть токены simple в файле"
+            )
         quiet = report.reasoning_default and report.reasoning_off_param
         if quiet and mcfg.reasoning_off != "reasoning_effort":
             lines.append(f"{report.name}: рассуждает по умолчанию — reasoning_off: reasoning_effort")
