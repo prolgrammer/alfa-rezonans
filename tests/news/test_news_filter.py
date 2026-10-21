@@ -392,8 +392,10 @@ async def test_isolated_calls_are_bounded(fake):
     items = [item(n, row["title"], row["text"]) for n in range(1, 26)] + [item(99)]
     results = await news_filter(items)
     sizes = sorted(len(numbers(p)) for p in gateway.prompts)
-    assert sizes == [1] * extract.FILTER_ISOLATED_MAX + [1, 5, 10]  # чистая новость — своей пачкой
+    assert sizes == [1] * (extract.FILTER_ISOLATED_MAX + 1)  # десять помеченных и пачка с чистой новостью
     assert len(results) == 26
+    over = results[extract.FILTER_ISOLATED_MAX : 25]
+    assert [(r.business, r.reason) for r in over] == [(True, extract.OVER_ISOLATED_REASON)] * 15
     clean = [c["vars"]["sources"] for c in gateway.calls if "Новость номер 99" in c["vars"]["sources"]]
     assert len(clean) == 1 and "[!команда] " not in clean[0]
 

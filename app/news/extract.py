@@ -17,7 +17,8 @@ FILTER_ITEM_LIMIT = 1500
 # выгрузки истёк бы, не дойдя до модели. Два, а не три — один слот остаётся карточкам событий.
 FILTER_CONCURRENCY = 2
 # Публикации с фразой-командой идут по одной, но не больше стольких за вызов: лента из одних таких
-# публикаций иначе стоила бы вдесятеро. Остальные — пачками между собой, без чистых новостей.
+# публикаций иначе стоила бы вдесятеро. Остальные пропускаются дальше без модели, как при её сбое:
+# вместе в одном промпте они могли бы влиять друг на друга.
 FILTER_ISOLATED_MAX = 10
 _REASON_MAX = 200
 # Попытка закрыть <source> или подсунуть разметку ролей в обычной новости не встречается — такую публикацию
@@ -26,6 +27,7 @@ _REASON_MAX = 200
 _QUARANTINE_FLAGS = frozenset({Flag.SOURCE_TAG, Flag.MARKUP_TAG})
 
 NO_LLM_REASON = "фильтр без LLM: пропущено дальше"
+OVER_ISOLATED_REASON = "фраза-команда, лимит отдельных проверок исчерпан: пропущено дальше"
 NO_ANSWER_REASON = "модель не дала ответа: пропущено дальше"
 EMPTY_REASON = "без пояснения модели"
 
@@ -113,11 +115,9 @@ async def news_filter(items: list[RawItemIn]) -> list[NewsFilterResult]:
             clean.append((index, item))
     # публикация с фразой-командой идёт отдельным вызовом: в общей пачке она могла бы повлиять
     # на ответы по соседним новостям, а одна — только на свой
-    batches = (
-        list(batched(clean, FILTER_BATCH))
-        + [(entry,) for entry in commanded[:FILTER_ISOLATED_MAX]]
-        + list(batched(commanded[FILTER_ISOLATED_MAX:], FILTER_BATCH))
-    )
+    for index, item in commanded[FILTER_ISOLATED_MAX:]:
+        results[index] = _result(item, True, OVER_ISOLATED_REASON)
+    batches = list(batched(clean, FILTER_BATCH)) + [(entry,) for entry in commanded[:FILTER_ISOLATED_MAX]]
     slots = asyncio.Semaphore(FILTER_CONCURRENCY)
 
     async def run(batch: tuple[tuple[int, RawItemIn], ...]) -> list[NewsFilterResult]:
