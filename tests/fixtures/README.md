@@ -21,6 +21,8 @@
 | `relevance.json` | `dict[company_id, list[RelevanceScore]]` | «Почему у вас»; у `C-IT-01` событие 3 имеет стадию `below_threshold`, поэтому в её ленте его нет |
 | `insight.json` | `InsightResult` | Разбор события 1 для `C-DEV-01`, роль `cfo`, режим `full` |
 | `trace.json` | `list[AgentStep]` | Трасса этого разбора: все виды шагов, у шагов `tool` есть `tool_call` |
+| `insight_it.json` | `InsightResult` | Разбор события 1 для `C-IT-01`, роль `cfo`: возможность («Доходность размещения свободных денег сохранится дольше, чем ожидалось»), признаки `products.DEP`, `products.LOA` |
+| `trace_it.json` | `list[AgentStep]` | Короткая трасса этого разбора (7 шагов) |
 | `chat_answer.json` | `ChatAnswer` | Ответ на «Что именно говорит банк?» со сносками и рядом `cbr_key_rate` |
 | `llm_usage.json` | `LlmUsage` | Расходы на модели за сутки по задачам (`GET /api/admin/llm/usage`) |
 | `quality.json` | `Quality` | Три подхода × метрики и текущие метрики (`GET /api/admin/quality`) |
