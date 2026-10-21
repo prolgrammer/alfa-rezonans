@@ -24,6 +24,11 @@ ERROR_TEXT_LIMIT = 300
 
 _AUTH_RE = re.compile(r"(Api-Key|Bearer)\s+[A-Za-z0-9_\-.]{8,}")
 _MODEL_URI_RE = re.compile(r"\b(gpt|emb|cls)://[^/\s]+/")
+# Модель не подключена ключу или URI неверен. AI Studio отвечает так: 400 «Failed to get model».
+UNKNOWN_MODEL_RE = re.compile(
+    r"failed to get model|model[^\n]{0,80}?(not found|not exist|unknown)|модель[^\n]{0,80}?не найдена",
+    re.IGNORECASE,
+)
 
 
 def estimate_tokens(text: str) -> int:
@@ -172,7 +177,10 @@ class Provider:
                 else:
                     text = self.mask(response.text)[:ERROR_TEXT_LIMIT]
                     if status == 400:
-                        raise BadRequest(f"HTTP 400: {text}", 400, model_fault=False)
+                        # неизвестная модель — вина модели цепочки: предохранитель должен её отключить,
+                        # иначе каждый вызов задачи сначала тратит запрос на заведомый отказ
+                        unknown = bool(UNKNOWN_MODEL_RE.search(text))
+                        raise BadRequest(f"HTTP 400: {text}", 400, model_fault=unknown)
                     if status != 429 and status < 500:
                         raise ProviderError(f"HTTP {status}: {text}", status)
                     last = f"HTTP {status}: {text}"

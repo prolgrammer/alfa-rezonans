@@ -92,6 +92,13 @@ async def test_unknown_model_is_unavailable(api, make_gw):
     assert len(calls.calls) == 1
 
 
+async def test_ai_studio_failed_to_get_model_is_unavailable(api, make_gw):
+    # так AI Studio отвечает на модель, не подключённую ключу (живой прогон 2026-10-21)
+    body = {"error": {"message": "Failed to get model", "type": "server_error"}}
+    route(api, lambda r: httpx.Response(400, json=body))
+    assert (await probe.probe_model(make_gw(), QWEN)).status == "unavailable"
+
+
 async def test_bad_request_naming_model_is_unavailable(api, make_gw):
     route(api, lambda r: httpx.Response(400, text="Model gpt://abc/gemma-4/latest not found"))
     assert (await probe.probe_model(make_gw(), QWEN)).status == "unavailable"
