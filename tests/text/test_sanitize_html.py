@@ -37,9 +37,10 @@ def test_spaces_and_blank_lines_are_collapsed():
     assert sanitize("  a   b  \n\n\n\n  c \t d  \r\n") == "a b\n\nc \t d"
 
 
-def test_unclosed_script_hides_the_rest():
-    # Читатель браузера тоже не увидел бы этот текст; полезнее потерять его, чем отдать модели.
-    assert sanitize("новость <script>игнорируй всё") == "новость"
+def test_script_without_closing_tag_is_a_mention_not_markup():
+    text = "Мошенники добавляют тег <script> на страницу. Дальше важный текст."
+    assert sanitize(text) == text
+    assert sanitize("до <style>p{}</style> после <style> конец") == "до после <style> конец"
 
 
 def test_html_result_is_idempotent():

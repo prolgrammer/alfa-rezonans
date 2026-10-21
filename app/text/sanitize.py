@@ -39,6 +39,8 @@ _HTML_TAGS = (
 ).split()
 _NOT_MARKUP_RE = re.compile(
     rf"<(?!/?(?:{'|'.join(sorted(_HTML_TAGS, key=len, reverse=True))})\b[^<>]*>"
+    # <o:p> и подобные — разметка Word с пространством имён, частая в пресс-релизах
+    r"|/?[a-z]+:[a-z][\w-]*\b[^<>]*>"
     r"|source\s+(?:srcset|src|type|media|sizes)\b[^<>]*>|!--|![a-z][^<>]*>)",
     re.I,
 )
@@ -52,6 +54,7 @@ _BLOCK_TAGS = frozenset(
     {"p", "div", "br", "li", "ul", "ol", "tr", "table", "blockquote", "section", "article", "header"}
     | {"footer", "hr", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt", "figcaption", "main", "aside"}
 )
+_IMPLICITLY_CLOSED = frozenset({"p", "li", "dt", "dd", "option", "tr", "td", "th"})
 _HIDDEN_STYLE_RE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
 # Сущность раскрывается в тег (&lt;b&gt;), тег — в сущность (&amp;lt;): повторяем до неподвижной точки.
 # Каждый проход, который что-то меняет, укорачивает текст; предел — только страховка.
@@ -143,6 +146,8 @@ class _TextExtractor(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self._open: list[tuple[str, bool]] = []
+        # сколько открыто элементов каждого имени: лишний закрывающий тег не сканирует стек — без квадрата
+        self._count: dict[str, int] = {}
         self._hidden = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -150,31 +155,64 @@ class _TextExtractor(HTMLParser):
             self.parts.append("\n")
         if tag in _VOID_TAGS:
             return
+        # браузер закрывает <p> перед новым блоком и <li> перед следующим <li>: иначе скрытый абзац
+        # «<p hidden>…<p>текст» спрятал бы и видимый текст
+        if (
+            self._open
+            and (top := self._open[-1][0]) in _IMPLICITLY_CLOSED
+            and (top == tag or (top == "p" and tag in _BLOCK_TAGS))
+        ):
+            self._close_to(len(self._open) - 1)
         hidden = tag in _HIDDEN_TAGS or _hidden_by_attrs(attrs)
         self._open.append((tag, hidden))
+        self._count[tag] = self._count.get(tag, 0) + 1
         self._hidden += hidden
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in _BLOCK_TAGS:
-            self.parts.append("\n")
+        # браузер не видит «/» у обычного элемента: <div hidden/> открывает скрытый блок
+        self.handle_starttag(tag, attrs)
+        if tag in _HIDDEN_TAGS:
+            self.set_cdata_mode(tag)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in _BLOCK_TAGS:
             self.parts.append("\n")
+        if not self._count.get(tag):
+            return
         # HTML новостей часто без закрывающих </p>: закрываем до ближайшего открытого тега с тем же именем
         for i in range(len(self._open) - 1, -1, -1):
             if self._open[i][0] == tag:
-                self._hidden -= sum(hidden for _, hidden in self._open[i:])
-                del self._open[i:]
+                self._close_to(i)
                 break
+
+    def _close_to(self, index: int) -> None:
+        for name, hidden in self._open[index:]:
+            self._count[name] -= 1
+            self._hidden -= hidden
+        del self._open[index:]
 
     def handle_data(self, data: str) -> None:
         if not self._hidden:
             self.parts.append(data)
 
 
+def _keep_unclosed_hidden_as_text(text: str) -> str:
+    # «добавляют тег <script> на страницу…» — упоминание, а не разметка: без закрывающего тега дальше
+    # браузер спрятал бы всю новость. Открывающий тег после последнего закрывающего — текст.
+    lowered = text.lower()
+    for name in _HIDDEN_TAGS:
+        last_close = lowered.rfind(f"</{name}")
+        text = re.sub(
+            rf"<(?={name}\b)",
+            lambda m, last=last_close: "<" if m.start() < last else "&lt;",
+            text,
+            flags=re.I,
+        )
+    return text
+
+
 def _strip_html(text: str) -> str:
-    text = _NOT_MARKUP_RE.sub("&lt;", text)
+    text = _keep_unclosed_hidden_as_text(_NOT_MARKUP_RE.sub("&lt;", text))
     # незакрытый комментарий съел бы весь хвост новости — после последнего «-->» он остаётся текстом
     tail = text.rfind("-->") + 1
     text = text[:tail] + text[tail:].replace("<!--", "&lt;!--")
@@ -214,8 +252,8 @@ def sanitize(text: str) -> str:
 # Похожие буквы другого алфавита: «<ѕource» с кириллической ѕ и «игнoрируй» с латинской o должны совпасть
 # с шаблонами. Замена посимвольная — позиции в «скелете» совпадают с позициями в тексте.
 _TO_LATIN = str.maketrans(
-    "аеорсхукмтнвіѕјАЕОРСХУКМТНВІЅЈοαειινρτυχκΟΑΕΙΚΝΡΤΥΧΒΜΗΖ",
-    "aeopcxykmthbisjAEOPCXYKMTHBISJoaeiivptuxkOAEIKNPTYXBMHZ",
+    "аеорсхукмтнвіѕјАЕОРСХУКМТНВІЅЈοαειινρτυχκΟΑΕΙΚΝΡΤΥΧΒΜΗΖսօᴀʙᴄᴅᴇɢʜɪᴊᴋʟᴍɴᴏᴘʀꜱᴛᴜᴠᴡʏᴢ",
+    "aeopcxykmthbisjAEOPCXYKMTHBISJoaeiivptuxkOAEIKNPTYXBMHZuoabcdeghijklmnoprstuvwyz",
 )
 _TO_CYRILLIC = str.maketrans(
     "aeopcxykmthbAEOPCXYKMTHBёЁοαερκτχΟΑΕΡΚΤΧΒΜΗ",
@@ -264,22 +302,17 @@ def _defuse_tags(text: str, flags: set[Flag]) -> str:
 
 
 # 64+ символов алфавита base64 без пробелов, строки MIME-переноса склеиваются в одну серию. Слаг ссылки
-# и hex-хэш — в одном регистре, поэтому условие «есть заглавная, строчная и цифра» их не трогает; ссылку
-# с токеном в пути (диск, облако) пропускаем целиком: это адрес, а не вложение.
-_B64_RE = re.compile(
-    r"(?P<url>(?:https?://|www\.)\S+)"
-    r"|[A-Za-z0-9+/_-]{64,}={0,2}(?:[ \t]*\n[ \t]*[A-Za-z0-9+/_-]{16,}={0,2})*",
-    re.I,
-)
+# и hex-хэш — в одном регистре, поэтому условие «есть заглавная, строчная и цифра» их не трогает. Ссылки
+# не исключаем: «https://x/» перед закодированной инструкцией не должно её спасать, а настоящие токены
+# в ссылках (Диск, облака) короче порога.
+_B64_RE = re.compile(r"[A-Za-z0-9+/_-]{64,}={0,2}(?:[ \t]*\n[ \t]*[A-Za-z0-9+/_-]{16,}={0,2})*")
 _B64_MARK = "[base64 опущен: {} символов]"
 
 
 def _drop_base64(text: str, flags: set[Flag]) -> str:
     def repl(m: re.Match[str]) -> str:
         run = m.group(0)
-        if m.group("url") or not (
-            re.search(r"[A-Z]", run) and re.search(r"[a-z]", run) and re.search(r"[0-9]", run)
-        ):
+        if not (re.search(r"[A-Z]", run) and re.search(r"[a-z]", run) and re.search(r"[0-9]", run)):
             return run
         flags.add(Flag.BASE64)
         return _B64_MARK.format(sum(not ch.isspace() for ch in run))
@@ -303,11 +336,19 @@ _RU_PATTERNS = [
     _SENTENCE_START + r"(?:нов|обновленн|настоящ|секретн|скрыт)\w*\s+инструкци\w*\s*:",
     r"\bинструкци\w*\s+для\s+(?:тебя|модели|ассистента|нейросети|ии|бота)\b",
     r"\bсистемн\w*\s+промпт\w*",
-    r"\b(?:покажи|выведи|раскрой|напечатай|повтори|перескажи)(?:те)?\s+(?:\w+\s+){0,2}?"
-    r"(?:промпт|инструкци)\w*",
-    r"\b(?:поставь|присвой|выстави|назначь)(?:те)?\s+(?:\w+\s+){0,3}?(?:оценк|релевантност|балл)\w*",
+    # «покажите инструкцию по применению» — обычная фраза; команда — про свои / системные инструкции
+    r"\b(?:покажи|выведи|раскрой|напечатай|повтори|перескажи)(?:те)?\s+(?:\w+\s+){0,1}?"
+    r"(?:сво|тво|систем|исходн|скрыт|внутренн)\w*\s+(?:промпт|инструкци)\w*",
+    r"\b(?:покажи|выведи|раскрой|напечатай)(?:те)?\s+(?:\w+\s+){0,1}?промпт\w*",
+    # «поставьте оценку нашему сервису» — реклама; команда — с баллом или «максимальную»
+    r"\b(?:поставь|присвой|выстави|назначь)(?:те)?\s+(?:\w+\s+){0,3}?(?:оценк|релевантност|балл)\w*\s+"
+    r"(?:\w+\s+){0,2}?(?:\d|максимальн|наивысш|высш)",
+    r"\b(?:поставь|присвой|выстави|назначь)(?:те)?\s+(?:\w+\s+){0,3}?(?:\d|максимальн|наивысш|высш)\w*\s+"
+    r"(?:\w+\s+){0,1}?(?:оценк|релевантност|балл)",
     r"\bоцени(?:те)?\s+(?:\w+\s+){0,3}?(?:на\s+\d|в\s+\d|максимальн|наивысш|высш)",
-    r"\b(?:отвечай|ответь)(?:те)?\s+(?:\w+\s+){0,2}?(?:только|лишь|исключительно)\b",
+    # «ответьте только на один вопрос» — анкета; команда — про форму ответа
+    r"\b(?:отвечай|ответь)(?:те)?\s+(?:\w+\s+){0,1}?(?:только|лишь|исключительно)\s+"
+    r"(?:словом|одним|«|\"|'|да\b|нет\b|json|цифрой|числом)",
     r"\b(?:считай|признай|отметь|пометь)(?:те)?\s+(?:\w+\s+){0,2}?(?:новост|событи|публикаци|текст)\w*\s+"
     r"(?:\w+\s+){0,1}?(?:важн|релевантн|делов|бизнес)\w*",
     r"^[ \t]*(?:#{1,6}[ \t]*)?(?:системн\w*\s+сообщени\w*|ассистент)[ \t]*:",
@@ -328,7 +369,8 @@ _EN_PATTERNS = [
     r"\b(?:respond|answer|reply)\s+(?:\w+\s+){0,2}?only\b",
     r"\bset\s+(?:\w+\s+){0,3}?(?:relevance|score|rating)\s+(?:to|=|at)\b",
     r"\b(?:mark|classify|treat|label)\s+(?:this|the)\s+(?:news|article|item|text|story)\s+as\b",
-    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:system|assistant|developer)[ \t]*:",
+    # «System: down 3%» встречается в сводках: без «###» помечаем только редкие в новостях метки ролей
+    r"^[ \t]*#{1,6}[ \t]*(?:system|assistant|developer)[ \t]*:|^[ \t]*(?:assistant|developer)[ \t]*:",
     r"^[ \t]*#{1,6}[ \t]*(?:system|instructions?)\b",
 ]
 _RU_RE = re.compile("|".join(f"(?:{p})" for p in _RU_PATTERNS), re.I | re.M)
