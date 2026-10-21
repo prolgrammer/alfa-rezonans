@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -5,7 +6,7 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.llm.store import CallRow, MemoryStore, PgStore
+from app.llm.store import CallRow, LazyStore, MemoryStore, PgStore
 
 
 async def test_memory_store_roundtrip():
@@ -77,3 +78,54 @@ async def test_pg_store_survives_db_down(caplog):
         assert await store.spent_since(datetime.now(UTC)) is None
     assert "БД недоступна" in caplog.text
     assert "secret-pass" not in caplog.text
+
+
+async def test_pg_store_retries_without_missing_event(pg_pool, db_conn, caplog):
+    with caplog.at_level(logging.WARNING):
+        await PgStore(pg_pool).record(CallRow(task="t", model="m", lane="background", event_id=999999))
+    assert db_conn.execute("SELECT task, event_id FROM llm_calls").fetchall() == [("t", None)]
+    assert "нет в БД" in caplog.text
+
+
+async def test_deleting_event_keeps_call_history(pg_pool, db_conn):
+    event_id = db_conn.execute("INSERT INTO events (title) VALUES ('событие') RETURNING id").fetchone()[0]
+    await PgStore(pg_pool).record(CallRow(task="t", model="m", lane="background", event_id=event_id))
+    db_conn.execute("DELETE FROM events WHERE id = %s", (event_id,))
+    assert db_conn.execute("SELECT event_id FROM llm_calls").fetchall() == [(None,)]
+
+
+async def test_lazy_store_does_not_wait_and_retries_rarely(pg_pool, db_conn):
+    now = [0.0]
+    attempts: list[float] = []
+    release = asyncio.Event()
+    fail = [True]
+
+    async def open_pool():
+        attempts.append(now[0])
+        await release.wait()
+        if fail[0]:
+            raise ConnectionError("БД лежит")
+        return pg_pool
+
+    store = LazyStore(open_pool, clock=lambda: now[0], retry_s=60)
+    # открытие ещё висит, а вызовы уже работают на памяти
+    await asyncio.wait_for(store.record(CallRow(task="t", model="m", lane="background")), 1)
+    await store.cache_put("k", "t", "m", {"a": 1})
+    assert await store.cache_get("k") == {"a": 1}
+    await asyncio.sleep(0)
+    assert attempts == [0.0]
+
+    release.set()
+    await asyncio.sleep(0.05)  # открытие провалилось
+    now[0] = 30
+    await store.record(CallRow(task="t", model="m", lane="background"))
+    assert attempts == [0.0]  # до истечения 60 с повтора нет
+
+    now[0] = 61
+    fail[0] = False
+    await store.record(CallRow(task="t", model="m", lane="background"))
+    await asyncio.sleep(0.05)
+    assert attempts == [0.0, 61]
+
+    await store.record(CallRow(task="in-db", model="m", lane="background"))
+    assert db_conn.execute("SELECT task FROM llm_calls").fetchall() == [("in-db",)]
