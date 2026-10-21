@@ -14,7 +14,6 @@ STUBS = [
     (["warm"], "BE-10"),
     (["eval"], "DQ-14"),
     (["smoke"], "BE-13"),
-    (["llm", "probe", "--dry-run"], "ML-2"),
     (["sources", "test"], "BE-4"),
     (["demo"], "BE-12"),
     (["status", "--watch"], "BE-10"),
@@ -31,7 +30,7 @@ def test_not_implemented_command(cmd, item):
 
 def test_help_lists_all_commands():
     output = runner.invoke(app, ["--help"]).output
-    top_level = {cmd[0] for cmd, _ in STUBS} | {"migrate", "openapi"}
+    top_level = {cmd[0] for cmd, _ in STUBS} | {"migrate", "openapi", "llm"}
     for name in top_level:
         assert name in output
     sub = runner.invoke(app, ["llm", "--help"]).output

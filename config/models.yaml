@@ -1,5 +1,6 @@
 # Модели и задачи шлюза (ML-1). Список моделей ограничен белым списком в app/llm/config.py.
 # price — ₽ за 1000 токенов; {folder} в uri подставляется из LLM_FOLDER_ID.
+# caps проверены `orientir llm probe` 2026-10-21 у Qwen3.6 и DeepSeek V4.1; у остальных — заявленные.
 
 providers:
   yandex:
@@ -12,14 +13,14 @@ providers:
 
 models:
   gemma-4-26b-a4b:
-    # URI и цена — уточнить: probe (задача 5) и тарифы AI Studio
+    # probe 2026-10-21: ключу команды недоступна (400 «Failed to get model», нет в каталоге); цена — оценка сверху
     provider: yandex
     uri: "gpt://{folder}/gemma-4-26b-a4b/latest"
     context: 131072
     price: {in: 0.50, out: 1.20}
     caps: [json_schema, json_object, tools]
   glm-5.3-flash:
-    # URI и цена — уточнить: probe (задача 5) и тарифы AI Studio
+    # probe 2026-10-21: ключу команды недоступна (400 «Failed to get model», нет в каталоге); цена — оценка сверху
     provider: yandex
     uri: "gpt://{folder}/glm-5.3-flash/latest"
     context: 131072
@@ -30,25 +31,28 @@ models:
     uri: "gpt://{folder}/qwen3.6-35b-a3b/latest"
     context: 262144
     price: {in: 0.20, out: 0.30}
-    caps: [json_schema, json_object, tools]
+    # json_object не держит: с reasoning_effort=none отдаёт {"": ""} (probe, два прогона)
+    caps: [json_schema, tools, vision]
     # без reasoning_effort Qwen3.6 тратит max_tokens на рассуждения и отдаёт пустой content
     reasoning_off: reasoning_effort
   deepseek-v4.1-flash:
-    # в AI Studio модель называется deepseek-v4-flash
+    # deepseek-v4-flash в AI Studio — предыдущая версия V4, её отключают 15.11.2026
     provider: yandex
-    uri: "gpt://{folder}/deepseek-v4-flash/latest"
-    context: 131072
+    uri: "gpt://{folder}/deepseek-v4.1-flash/latest"
+    context: 1048576
     price: {in: 0.30, out: 0.50}
-    caps: [json_schema, json_object, tools]
+    caps: [json_schema, json_object, tools, vision]
+    # рассуждает по умолчанию; reasoning_effort=none их гасит (probe)
+    reasoning_off: reasoning_effort
   qwen3-vl-30b-a3b-instruct:
-    # URI и цена — уточнить: probe (задача 5) и тарифы AI Studio
+    # probe 2026-10-21: ключу команды недоступна (400 «Failed to get model», нет в каталоге); цена — оценка сверху
     provider: yandex
     uri: "gpt://{folder}/qwen3-vl-30b-a3b-instruct/latest"
     context: 131072
     price: {in: 0.50, out: 1.20}
     caps: [json_object, vision]
   kimi-k2.6:
-    # URI и цена — уточнить: probe (задача 5) и тарифы AI Studio
+    # probe 2026-10-21: ключу команды недоступна (400 «Failed to get model», нет в каталоге); цена — оценка сверху
     provider: yandex
     uri: "gpt://{folder}/kimi-k2.6/latest"
     context: 262144
@@ -57,29 +61,31 @@ models:
 
 # temperature и max_tokens — стартовые, их уточнит бенчмарк (задача 21).
 # essential: false у всех: при 100% лимита продукт целиком переходит на разбор без LLM (ML-3).
+# Основные модели — по ТЗ (ML-2). Пока Gemma, GLM, Kimi и Qwen3-VL ключу недоступны, их отказ размыкает
+# предохранитель, а цепочку замыкает доступная модель. Писатель разбора не падает на DeepSeek: это критик.
 tasks:
   news_filter:
     {model: gemma-4-26b-a4b, fallback: [qwen3.6-35b-a3b], temperature: 0.1, max_tokens: 600, essential: false}
   event_card:
-    {model: qwen3.6-35b-a3b, fallback: [glm-5.3-flash], temperature: 0.1, max_tokens: 1500, essential: false}
+    {model: qwen3.6-35b-a3b, fallback: [glm-5.3-flash, deepseek-v4.1-flash], temperature: 0.1, max_tokens: 1500, essential: false}
   rank_judge:
     {model: gemma-4-26b-a4b, fallback: [qwen3.6-35b-a3b], temperature: 0.1, max_tokens: 800, essential: false}
   bank_theses:
     {model: deepseek-v4.1-flash, fallback: [qwen3.6-35b-a3b], temperature: 0.1, max_tokens: 4000, essential: false}
   chart_read:
-    {model: qwen3-vl-30b-a3b-instruct, fallback: [], temperature: 0.1, max_tokens: 800, essential: false}
+    {model: qwen3-vl-30b-a3b-instruct, fallback: [qwen3.6-35b-a3b], temperature: 0.1, max_tokens: 800, essential: false}
   insight_plan:
-    {model: glm-5.3-flash, fallback: [kimi-k2.6], temperature: 0.2, max_tokens: 1500, reasoning: true, essential: false}
+    {model: glm-5.3-flash, fallback: [kimi-k2.6, deepseek-v4.1-flash], temperature: 0.2, max_tokens: 1500, reasoning: true, essential: false}
   insight_write:
-    {model: glm-5.3-flash, fallback: [kimi-k2.6], temperature: 0.3, max_tokens: 2500, strategy: tools, essential: false}
+    {model: glm-5.3-flash, fallback: [kimi-k2.6, qwen3.6-35b-a3b], temperature: 0.3, max_tokens: 2500, strategy: tools, essential: false}
   insight_critic:
     {model: deepseek-v4.1-flash, fallback: [kimi-k2.6], temperature: 0.1, max_tokens: 1500, reasoning: true, essential: false}
   chat:
-    {model: qwen3.6-35b-a3b, fallback: [glm-5.3-flash], temperature: 0.2, max_tokens: 900, strategy: tools, essential: false}
+    {model: qwen3.6-35b-a3b, fallback: [glm-5.3-flash, deepseek-v4.1-flash], temperature: 0.2, max_tokens: 900, strategy: tools, essential: false}
   profile_text:
-    {model: qwen3.6-35b-a3b, fallback: [gemma-4-26b-a4b], temperature: 0.1, max_tokens: 1000, essential: false}
+    {model: qwen3.6-35b-a3b, fallback: [gemma-4-26b-a4b, deepseek-v4.1-flash], temperature: 0.1, max_tokens: 1000, essential: false}
   eval_judge:
     {model: kimi-k2.6, fallback: [deepseek-v4.1-flash], temperature: 0.0, max_tokens: 800, essential: false}
-  # модель задаёт вызывающий (orientir llm probe)
+  # модель задаёт вызывающий (orientir llm probe); 300 токенов хватает, чтобы увидеть рассуждения
   probe:
-    {model: null, fallback: [], temperature: 0.0, max_tokens: 50, essential: false}
+    {model: null, fallback: [], temperature: 0.0, max_tokens: 300, essential: false}

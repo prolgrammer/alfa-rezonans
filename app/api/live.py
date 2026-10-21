@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from typing import NoReturn
 
@@ -22,6 +23,7 @@ from app.api.schemas import (
     ReviewIn,
     ReviewQueueItem,
     SourceHealth,
+    TaskUsage,
     ToolCallLog,
     Trace,
     Why,
@@ -39,7 +41,12 @@ from app.contracts import (
     SessionCtx,
     ThesisItem,
 )
+from app.db import get_pool
+from app.llm import gw
+from app.llm.store import usage_since
 from app.rank.feed import explain, highlights, rank_feed
+
+log = logging.getLogger(__name__)
 
 
 def not_implemented(item: str) -> NoReturn:
@@ -125,7 +132,20 @@ class LiveBackend:
         not_implemented("DQ-14")
 
     async def llm_usage(self) -> LlmUsage:
-        not_implemented("ML-3")
+        state = await gw.budget_state()
+        try:
+            rows = await usage_since(await get_pool(), state.since)
+        except Exception as exc:
+            # без БД админка всё равно видит ступень и расход процесса, разбивки по задачам нет
+            log.warning("расход LLM по задачам не прочитан: БД недоступна (%s)", type(exc).__name__)
+            rows = []
+        return LlmUsage(
+            day=state.day,
+            budget_rub=max(state.limit_rub, 0.0),
+            spent_rub=round(state.spent_rub, 2),
+            ladder_step=state.step,
+            by_task=[TaskUsage.model_validate(row) for row in rows],
+        )
 
     async def tool_calls(self) -> list[ToolCallLog]:
         not_implemented("ML-10")

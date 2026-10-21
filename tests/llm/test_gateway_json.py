@@ -7,6 +7,7 @@ from llm_support import (
     FOLDER,
     GOOD,
     KEY,
+    LAST,
     PRIMARY,
     Answer,
     bodies,
@@ -206,18 +207,17 @@ async def test_breaker_reopens_after_failed_probe(api, make_gw, clock):
 
 
 async def test_breaker_still_tries_last_model(api, make_gw):
-    route = route_by_model(
-        api, {PRIMARY: httpx.Response(503, text="down"), FALLBACK: httpx.Response(503, text="down")}
-    )
+    down = httpx.Response(503, text="down")
+    route = route_by_model(api, {PRIMARY: down, FALLBACK: down, LAST: down})
     gw = make_gw()
     for i in range(5):
         with pytest.raises(AllModelsFailed):
             await call(gw, f"v{i}")
-    assert gw.breaker.state(FALLBACK) == "open"
-    before = len(bodies(route, FALLBACK))
+    assert gw.breaker.state(LAST) == "open"
+    before = len(bodies(route, LAST))
     with pytest.raises(AllModelsFailed):
         await call(gw, "ещё")
-    assert len(bodies(route, FALLBACK)) > before
+    assert len(bodies(route, LAST)) > before
 
 
 def test_breaker_unit():
@@ -302,7 +302,7 @@ async def test_all_down_fails_fast(api, make_gw, clock):
     route = api.post("/chat/completions").mock(side_effect=httpx.ConnectError("нет связи"))
     with pytest.raises(AllModelsFailed):
         await call(make_gw())
-    assert route.call_count == 6
+    assert route.call_count == 9  # три модели цепочки × три попытки
     assert clock.now <= 180
 
 
@@ -365,3 +365,15 @@ async def test_interactive_lane_passes_when_background_busy(api, make_gw, store)
         await background.acquire()
     await call(gw, "разбор по клику", lane="interactive")
     assert store.rows[-1].lane == "interactive"
+
+
+async def test_unknown_model_opens_breaker(api, make_gw):
+    # модель не подключена ключу: после пяти отказов шлюз перестаёт тратить на неё запрос
+    unknown = httpx.Response(400, json={"error": {"message": "Failed to get model", "type": "server_error"}})
+    route = route_by_model(api, {PRIMARY: unknown, FALLBACK: GOOD})
+    gw = make_gw()
+    for i in range(5):
+        assert (await call(gw, f"v{i}")).value == 1
+    assert gw.breaker.state(PRIMARY) == "open"
+    await call(gw, "пропуск")
+    assert len(bodies(route, PRIMARY)) == 5

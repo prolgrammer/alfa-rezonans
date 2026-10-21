@@ -16,9 +16,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from app.db import get_pool
-from app.llm.budget import Budget
+from app.llm.budget import Budget, BudgetState
 from app.llm.config import ALLOWED_MODELS, ModelCfg, ModelsConfig, TaskCfg, load_caps, load_config
-from app.llm.errors import AllModelsFailed, BudgetExceeded, LLMNotConfigured, LLMUnavailable
+from app.llm.errors import (
+    AllModelsFailed,
+    BudgetExceeded,
+    LLMNotConfigured,
+    LLMUnavailable,
+    RunLimitExceeded,
+)
 from app.llm.jsonmode import (
     DOWNGRADE,
     JsonMode,
@@ -41,6 +47,7 @@ __all__ = [
     "LLMNotConfigured",
     "LLMUnavailable",
     "Lane",
+    "RunLimitExceeded",
     "Scope",
     "ScopeCall",
     "ToolCallRequest",
@@ -59,6 +66,8 @@ VALIDATION_ATTEMPTS = 2
 ERROR_LIMIT = 500
 # Сколько токенов занимает картинка в оценке резерва: точное число зависит от модели и размера.
 IMAGE_TOKENS = 2000
+RAW_DEADLINE_S = 60.0
+CAPS_FILE = REPO_ROOT / ".models_caps.json"
 
 
 class Breaker:
@@ -104,7 +113,10 @@ class ScopeCall:
 class Scope:
     trace_id: str
     event_id: int | None = None
+    # лимит одного запуска: разбор — INSIGHT_MAX_RUB, ответ чата — CHAT_MAX_RUB (ML-3)
+    limit_rub: float | None = None
     cost_rub: float = 0.0
+    held: float = 0.0  # резервы вызовов области, которые идут прямо сейчас
     tokens_in: int = 0
     tokens_out: int = 0
     calls: list[ScopeCall] = field(default_factory=list)
@@ -114,8 +126,34 @@ _scope: contextvars.ContextVar[Scope | None] = contextvars.ContextVar("llm_scope
 
 
 @contextlib.contextmanager
-def llm_scope(*, trace_id: str | None = None, event_id: int | None = None) -> Iterator[Scope]:
-    scope = Scope(trace_id=trace_id or uuid.uuid4().hex[:16], event_id=event_id)
+def _run_hold(task: str, reserve_rub: float) -> Iterator[None]:
+    """Лимит запуска: новый вызов не начинается, если потрачено и зарезервировано уже не меньше лимита.
+
+    Резерв самого вызова не входит: он оценка сверху (max_tokens, ×2 на рассуждения), и с ним
+    первый же шаг разбора на GLM (~3,6 ₽ резерва) не прошёл бы лимит 4 ₽, хотя стоит 1–2 ₽.
+    Перерасход — по вызову на каждый, начатый, пока лимит не был занят; строгий лимит держит дневной бюджет.
+    """
+    scope = _scope.get()
+    if scope is None or scope.limit_rub is None:
+        yield
+        return
+    if scope.cost_rub + scope.held >= scope.limit_rub:
+        raise RunLimitExceeded(
+            f"лимит запуска исчерпан ({scope.cost_rub:.2f} ₽ потрачено, {scope.held:.2f} ₽ в работе, "
+            f"лимит {scope.limit_rub:.2f} ₽): {task}"
+        )
+    scope.held += reserve_rub
+    try:
+        yield
+    finally:
+        scope.held -= reserve_rub
+
+
+@contextlib.contextmanager
+def llm_scope(
+    *, trace_id: str | None = None, event_id: int | None = None, limit_rub: float | None = None
+) -> Iterator[Scope]:
+    scope = Scope(trace_id=trace_id or uuid.uuid4().hex[:16], event_id=event_id, limit_rub=limit_rub)
     token = _scope.set(scope)
     try:
         yield scope
@@ -130,6 +168,16 @@ class _Failed(Exception):
         super().__init__(message)
         # сбой не по вине модели (очередь, дедлайн, чужой запрос) предохранитель не считает
         self.model_fault = model_fault
+
+
+@dataclass
+class RawAnswer:
+    """Ответ одной модели без кэша и резервных моделей: результат или ошибка (текст замаскирован)."""
+
+    result: ChatResult | None
+    error: ProviderError | None
+    ms: int
+    cost_rub: float
 
 
 @dataclass
@@ -150,6 +198,7 @@ class _Request:
     trace_id: str
     tools: list[dict[str, Any]] | None = None
     need_cap: str | None = None  # возможность, без которой модель цепочки пропускается
+    priority: bool = False  # официальный источник: карточка нужна и на ступени 85%
 
 
 def _text_of(message: dict[str, Any]) -> tuple[str, int]:
@@ -227,10 +276,12 @@ class Gateway:
         *,
         event_id: int | None = None,
         lane: Lane = "background",
+        priority: bool = False,
     ) -> M:
         cfg = self.config.task(task)
         text, version = self._prompts.render(prompt, vars)
         req = self._request(task, cfg, lane, [{"role": "user", "content": text}], schema, version, event_id)
+        req.priority = priority
         return await self._run(req)
 
     async def tools_step(
@@ -299,8 +350,98 @@ class Gateway:
     def _actual_caps(self) -> Mapping[str, set[str]]:
         # файл с фактическими возможностями пишет probe; читаем один раз, при первой надобности
         if self._caps is None:
-            self._caps = load_caps(REPO_ROOT / ".models_caps.json")
+            self._caps = load_caps(CAPS_FILE)
         return self._caps
+
+    def check_configured(self) -> None:
+        try:
+            api_key, folder = self._secrets()
+        except ValidationError:
+            raise LLMNotConfigured("настройки сервиса не загружены: вызов модели невозможен") from None
+        if not api_key or not folder:
+            raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
+
+    async def budget_state(self) -> BudgetState:
+        """Ступень лестницы и расход за сутки со сверкой по БД; ключ не нужен, в сеть не ходит."""
+        budget = await self._ready()
+        await budget.sync()
+        return budget.state()
+
+    async def provider(self, name: str) -> Provider:
+        self.check_configured()
+        await self._ready()
+        return self._providers[name]
+
+    async def raw_call(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        reasoning_off: bool = False,
+    ) -> RawAnswer:
+        """Один запрос к конкретной модели для probe (ML-2).
+
+        Без кэша, резерва модели и предохранителя: probe проверяет модель, а не задачу. Бюджет, слот
+        провайдера и строка llm_calls — как у обычного вызова. BudgetExceeded поднимается наружу.
+        """
+        if model not in ALLOWED_MODELS:
+            raise ValueError(f"модель {model!r} не входит в белый список кейса")
+        self.check_configured()
+        budget = await self._ready()
+        await budget.sync()
+        assert self._store is not None
+        cfg = self.config.task("probe")
+        budget.check("probe", "background", cfg.essential)
+        mcfg = self.config.models[model]
+        provider = self._providers[mcfg.provider]
+        req = self._request("probe", cfg, "background", messages, None, None, None)
+        req.tools = tools
+        body: dict[str, Any] = {
+            "model": provider.uri(mcfg.uri),
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "messages": messages,
+        }
+        if response_format is not None:
+            body["response_format"] = response_format
+        if tools is not None:
+            body["tools"], body["tool_choice"] = tools, "auto"
+        if reasoning_off:
+            body["reasoning_effort"] = "none"
+        started = self._clock()
+        deadline = started + RAW_DEADLINE_S
+        row = self._new_row(req, model)
+        usage = _Usage()
+        result: ChatResult | None = None
+        error: ProviderError | None = None
+        try:
+            async with provider.slot("background", max(deadline - started - MIN_WINDOW_S, 0.001)):
+                with budget.hold("probe", cfg.essential, self._reserve_rub(req, mcfg)):
+                    result = await provider.chat(body, deadline=deadline)
+        except ProviderError as exc:
+            error = exc
+        except BudgetExceeded:
+            raise
+        except Exception as exc:
+            # неожиданный сбой клиента тоже должен оставить строку llm_calls и замаскированный текст
+            log.warning("шлюз: неожиданная ошибка probe модели %s (%s)", model, type(exc).__name__)
+            error = ProviderError(
+                provider.mask(f"{type(exc).__name__}: {exc}")[:ERROR_LIMIT], model_fault=False
+            )
+        else:
+            usage.tokens_in, usage.tokens_out = result.tokens_in, result.tokens_out
+        if error is not None:
+            row.error = str(error)[:ERROR_LIMIT]
+        self._charge(row, mcfg, usage)
+        await self._finish(row, started)
+        return RawAnswer(result, error, row.ms, row.cost_rub)
+
+    async def aclose(self) -> None:
+        """Закрыть HTTP-клиенты провайдеров: нужно коротким процессам вроде CLI."""
+        for provider in self._providers.values():
+            await provider.aclose()
 
     def _secrets(self) -> tuple[str, str]:
         settings = self._settings or get_settings()
@@ -349,12 +490,7 @@ class Gateway:
     async def _run(self, req: _Request) -> BaseModel | ToolStepResult:
         # дедлайн отсчитываем с самого начала: подготовка к вызову тоже входит в бюджет времени полосы
         deadline = self._clock() + LANE_DEADLINE_S[req.lane]
-        try:
-            api_key, folder = self._secrets()
-        except ValidationError:
-            raise LLMNotConfigured("настройки сервиса не загружены: вызов модели невозможен") from None
-        if not api_key or not folder:
-            raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
+        self.check_configured()
         budget = await self._ready()
         await budget.sync()
         chain = self._chain(req.cfg, req.need_cap)
@@ -368,6 +504,8 @@ class Gateway:
         cached = await self._from_cache(req, chain)
         if cached is not None:
             return cached
+        # лестница — после кэша: повтор бесплатен, и прогретый кэш выдаётся на любой ступени
+        budget.check(req.task, req.lane, req.cfg.essential, priority=req.priority)
         errors: list[str] = []
         for index, model in enumerate(chain):
             now = self._clock()
@@ -451,11 +589,15 @@ class Gateway:
         row = self._new_row(req, model)
         usage = _Usage()
         wait = max(deadline - started - MIN_WINDOW_S, 0.001)
+        reserve = self._reserve_rub(req, mcfg)
         try:
             try:
                 # слот берём до резерва бюджета: очередь не должна раздувать резервы
                 async with provider.slot(req.lane, wait):
-                    with self._budget.hold(req.task, req.cfg.essential, self._reserve_rub(req, mcfg)):
+                    with (
+                        _run_hold(req.task, reserve),
+                        self._budget.hold(req.task, req.cfg.essential, reserve),
+                    ):
                         result = await self._guarded_query(req, model, mcfg, provider, usage, deadline)
             except SlotTimeout as exc:
                 raise _Failed(str(exc), model_fault=False) from None

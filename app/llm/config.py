@@ -118,11 +118,13 @@ def load_config(path: Path) -> ModelsConfig:
 
 
 def load_caps(path: Path) -> dict[str, set[str]]:
+    """Итоговые возможности из `.models_caps.json`, который пишет `orientir llm probe`."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return {str(model): {str(c) for c in caps} for model, caps in raw.items()}
+        models = raw["models"]
+        return {str(model): {str(c) for c in entry["caps"]} for model, entry in models.items()}
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError, AttributeError, TypeError) as exc:
+    except (OSError, ValueError, AttributeError, TypeError, KeyError) as exc:
         log.warning("файл возможностей моделей не прочитан, берём заявленные: %s", type(exc).__name__)
         return {}

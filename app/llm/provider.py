@@ -24,6 +24,11 @@ ERROR_TEXT_LIMIT = 300
 
 _AUTH_RE = re.compile(r"(Api-Key|Bearer)\s+[A-Za-z0-9_\-.]{8,}")
 _MODEL_URI_RE = re.compile(r"\b(gpt|emb|cls)://[^/\s]+/")
+# Модель не подключена ключу или URI неверен. AI Studio отвечает так: 400 «Failed to get model».
+UNKNOWN_MODEL_RE = re.compile(
+    r"failed to get model|model[^\n]{0,80}?(not found|not exist|unknown)|модель[^\n]{0,80}?не найдена",
+    re.IGNORECASE,
+)
 
 
 def estimate_tokens(text: str) -> int:
@@ -57,6 +62,8 @@ class ChatResult:
     tokens_in: int = 0
     tokens_out: int = 0
     finish_reason: str | None = None
+    # модель рассуждала: текст рассуждений в ответе или их токены в usage (нужно probe)
+    reasoning: bool = False
 
 
 def _message_text(message: dict[str, Any]) -> str:
@@ -170,7 +177,10 @@ class Provider:
                 else:
                     text = self.mask(response.text)[:ERROR_TEXT_LIMIT]
                     if status == 400:
-                        raise BadRequest(f"HTTP 400: {text}", 400, model_fault=False)
+                        # неизвестная модель — вина модели цепочки: предохранитель должен её отключить,
+                        # иначе каждый вызов задачи сначала тратит запрос на заведомый отказ
+                        unknown = bool(UNKNOWN_MODEL_RE.search(text))
+                        raise BadRequest(f"HTTP 400: {text}", 400, model_fault=unknown)
                     if status != 429 and status < 500:
                         raise ProviderError(f"HTTP {status}: {text}", status)
                     last = f"HTTP {status}: {text}"
@@ -180,6 +190,25 @@ class Provider:
                 break
             await self._sleep(pause)
         raise Transient(last, status)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def list_models(self) -> list[str] | None:
+        """Идентификаторы моделей из GET /models; None, если провайдер список не отдаёт."""
+        try:
+            response = await self._client.get("/models", timeout=httpx.Timeout(15.0, connect=5.0))
+        except httpx.RequestError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            data = response.json().get("data")
+        except (ValueError, AttributeError):
+            return None
+        if not isinstance(data, list):
+            return None
+        return [str(m["id"]) for m in data if isinstance(m, dict) and m.get("id")]
 
     @staticmethod
     def _retry_after(response: httpx.Response, default: float) -> float:
@@ -212,4 +241,8 @@ class Provider:
             tokens_in = sum(estimate_tokens(_message_text(m)) for m in body.get("messages", []))
             produced = text + "".join(json.dumps(c.args, ensure_ascii=False) for c in calls)
             tokens_out = estimate_tokens(produced)
-        return ChatResult(text, calls, tokens_in, tokens_out, choice.get("finish_reason"))
+        details = (usage or {}).get("completion_tokens_details") or {}
+        reasoning = bool(
+            message.get("reasoning_content") or message.get("reasoning") or details.get("reasoning_tokens")
+        )
+        return ChatResult(text, calls, tokens_in, tokens_out, choice.get("finish_reason"), reasoning)

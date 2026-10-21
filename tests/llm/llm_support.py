@@ -12,6 +12,7 @@ KEY = "test-key-SECRET-123456"
 FOLDER = "folder-SECRET-42"
 PRIMARY = "qwen3.6-35b-a3b"  # основная модель задачи event_card
 FALLBACK = "glm-5.3-flash"  # её резерв
+LAST = "deepseek-v4.1-flash"  # последняя модель цепочки event_card
 
 
 class Answer(BaseModel):
