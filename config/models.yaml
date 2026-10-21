@@ -30,14 +30,15 @@ models:
     uri: "gpt://{folder}/qwen3.6-35b-a3b/latest"
     context: 262144
     price: {in: 0.20, out: 0.30}
-    caps: [json_schema, json_object, tools]
+    # картинки — по документации AI Studio (Base64); проверит probe
+    caps: [json_schema, json_object, tools, vision]
     # без reasoning_effort Qwen3.6 тратит max_tokens на рассуждения и отдаёт пустой content
     reasoning_off: reasoning_effort
   deepseek-v4.1-flash:
-    # в AI Studio модель называется deepseek-v4-flash
+    # deepseek-v4-flash в AI Studio — предыдущая версия V4, её отключают 15.11.2026
     provider: yandex
-    uri: "gpt://{folder}/deepseek-v4-flash/latest"
-    context: 131072
+    uri: "gpt://{folder}/deepseek-v4.1-flash/latest"
+    context: 1048576
     price: {in: 0.30, out: 0.50}
     caps: [json_schema, json_object, tools]
   qwen3-vl-30b-a3b-instruct:
@@ -80,6 +81,6 @@ tasks:
     {model: qwen3.6-35b-a3b, fallback: [gemma-4-26b-a4b], temperature: 0.1, max_tokens: 1000, essential: false}
   eval_judge:
     {model: kimi-k2.6, fallback: [deepseek-v4.1-flash], temperature: 0.0, max_tokens: 800, essential: false}
-  # модель задаёт вызывающий (orientir llm probe)
+  # модель задаёт вызывающий (orientir llm probe); 300 токенов хватает, чтобы увидеть рассуждения
   probe:
-    {model: null, fallback: [], temperature: 0.0, max_tokens: 50, essential: false}
+    {model: null, fallback: [], temperature: 0.0, max_tokens: 300, essential: false}
