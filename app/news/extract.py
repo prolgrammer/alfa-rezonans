@@ -14,8 +14,11 @@ FILTER_BATCH = 10  # ML-4: пачка по 10 публикаций на вызо
 # ~400–500 токенов русского текста: укладываемся в 600 токенов на публикацию из ML-4
 FILTER_ITEM_LIMIT = 1500
 # Фоновых слотов у шлюза три, а дедлайн вызова идёт и в очереди за слотом: без предела хвост большой
-# выгрузки истёк бы, не дойдя до модели, и занял бы слоты карточек событий.
-FILTER_CONCURRENCY = 3
+# выгрузки истёк бы, не дойдя до модели. Два, а не три — один слот остаётся карточкам событий.
+FILTER_CONCURRENCY = 2
+# Публикации с фразой-командой идут по одной, но не больше стольких за вызов: лента из одних таких
+# публикаций иначе стоила бы вдесятеро. Остальные — пачками между собой, без чистых новостей.
+FILTER_ISOLATED_MAX = 10
 _REASON_MAX = 200
 # Попытка закрыть <source> или подсунуть разметку ролей в обычной новости не встречается — такую публикацию
 # не показываем ни фильтру, ни следующим шагам. Фраза-команда бывает и в настоящей новости («инструкции
@@ -81,7 +84,12 @@ async def _filter_batch(batch: list[RawItemIn]) -> list[NewsFilterResult]:
             retry = await _ask([batch[n - 1] for n in missing], retry=True)
             verdicts |= {missing[n - 1]: v for n, v in retry.items()}
         except LLMUnavailable:
-            pass
+            return [
+                _result(item, v.business, v.reason)
+                if (v := verdicts.get(n))
+                else _result(item, True, NO_LLM_REASON)
+                for n, item in enumerate(batch, 1)
+            ]
     return [
         _result(item, v.business, v.reason)
         if (v := verdicts.get(n))
@@ -105,7 +113,11 @@ async def news_filter(items: list[RawItemIn]) -> list[NewsFilterResult]:
             clean.append((index, item))
     # публикация с фразой-командой идёт отдельным вызовом: в общей пачке она могла бы повлиять
     # на ответы по соседним новостям, а одна — только на свой
-    batches = list(batched(clean, FILTER_BATCH)) + [(entry,) for entry in commanded]
+    batches = (
+        list(batched(clean, FILTER_BATCH))
+        + [(entry,) for entry in commanded[:FILTER_ISOLATED_MAX]]
+        + list(batched(commanded[FILTER_ISOLATED_MAX:], FILTER_BATCH))
+    )
     slots = asyncio.Semaphore(FILTER_CONCURRENCY)
 
     async def run(batch: tuple[tuple[int, RawItemIn], ...]) -> list[NewsFilterResult]:

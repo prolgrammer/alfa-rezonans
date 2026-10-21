@@ -92,7 +92,7 @@ async def test_batch_of_ten_is_one_call_and_keeps_order(fake):
     assert [r.business for r in results] == [n % 2 == 1 for n in range(1, 11)]
     assert [r.reason for r in results] == [f"r{n}" for n in range(1, 11)]
     call = gateway.calls[0]
-    assert (call["task"], call["version"], call["lane"]) == ("news_filter", "news_filter@2", "background")
+    assert (call["task"], call["version"], call["lane"]) == ("news_filter", "news_filter@3", "background")
 
 
 async def test_twenty_three_items_are_three_batches(fake):
@@ -114,9 +114,9 @@ async def test_prompt_wraps_every_item_into_its_source(fake):
         '<source n="1" source="rbc">\nЦБ сохранил ставку 14%\nРешение совета директоров.\n</source>' in prompt
     )
     assert '<source n="2" source="rbc">\nНовость номер 2\n</source>' in prompt
-    assert "ровно 2 элементов" in prompt
+    assert "номер `n` от 1 до 2." in prompt
     assert "Прошлый ответ" not in prompt
-    assert prompt.rstrip().endswith("Ответ — только JSON на 2 публикаций.")
+    assert prompt.rstrip().endswith("Ответ — только JSON, элементов: 2.")
 
 
 async def test_long_item_is_limited(fake):
@@ -265,7 +265,7 @@ async def test_failed_retry_keeps_answers_already_received(fake, monkeypatch):
     assert [(r.business, r.reason) for r in results] == [
         (False, "нет"),
         (False, "нет"),
-        (True, NO_ANSWER_REASON),
+        (True, NO_LLM_REASON),
         (False, "нет"),
     ]
 
@@ -288,7 +288,7 @@ async def test_no_more_than_three_batches_at_once(fake, monkeypatch):
     monkeypatch.setattr(gateway, "json", counting)
     results = await news_filter([item(n) for n in range(1, 81)])
     assert len(results) == 80
-    assert peak == extract.FILTER_CONCURRENCY == 3
+    assert peak == extract.FILTER_CONCURRENCY == 2
 
 
 async def test_base64_alone_is_not_quarantined(fake):
@@ -384,3 +384,29 @@ async def test_command_items_are_asked_alone(fake):
     shared = [c["vars"]["sources"] for c in gateway.calls if c["vars"]["count"] == 3]
     assert len(shared) == 1 and "[!команда] " not in shared[0]
     assert [r.raw_item_id for r in results] == [i.id for i in items]
+
+
+async def test_isolated_calls_are_bounded(fake):
+    row = next(r for r in INJECTIONS if r["expect_flags"] == ["command"])
+    gateway = fake()
+    items = [item(n, row["title"], row["text"]) for n in range(1, 26)] + [item(99)]
+    results = await news_filter(items)
+    sizes = sorted(len(numbers(p)) for p in gateway.prompts)
+    assert sizes == [1] * extract.FILTER_ISOLATED_MAX + [1, 5, 10]  # чистая новость — своей пачкой
+    assert len(results) == 26
+    clean = [c["vars"]["sources"] for c in gateway.calls if "Новость номер 99" in c["vars"]["sources"]]
+    assert len(clean) == 1 and "[!команда] " not in clean[0]
+
+
+async def test_failed_retry_reason_says_no_llm(fake, monkeypatch):
+    gateway = fake(answer=lambda ns: [{"n": n, "business": False, "reason": "нет"} for n in ns if n != 2])
+    real_json = gateway.json
+
+    async def retry_fails(task, prompt, variables, schema, **kwargs):
+        if variables["retry"]:
+            raise AllModelsFailed("упали")
+        return await real_json(task, prompt, variables, schema, **kwargs)
+
+    monkeypatch.setattr(gateway, "json", retry_fails)
+    results = await news_filter([item(1), item(2)])
+    assert [r.reason for r in results] == ["нет", NO_LLM_REASON]
