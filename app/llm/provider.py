@@ -57,6 +57,8 @@ class ChatResult:
     tokens_in: int = 0
     tokens_out: int = 0
     finish_reason: str | None = None
+    # модель рассуждала: текст рассуждений в ответе или их токены в usage (нужно probe)
+    reasoning: bool = False
 
 
 def _message_text(message: dict[str, Any]) -> str:
@@ -181,6 +183,22 @@ class Provider:
             await self._sleep(pause)
         raise Transient(last, status)
 
+    async def list_models(self) -> list[str] | None:
+        """Идентификаторы моделей из GET /models; None, если провайдер список не отдаёт."""
+        try:
+            response = await self._client.get("/models", timeout=httpx.Timeout(15.0, connect=5.0))
+        except httpx.RequestError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            data = response.json().get("data")
+        except (ValueError, AttributeError):
+            return None
+        if not isinstance(data, list):
+            return None
+        return [str(m["id"]) for m in data if isinstance(m, dict) and m.get("id")]
+
     @staticmethod
     def _retry_after(response: httpx.Response, default: float) -> float:
         try:
@@ -212,4 +230,8 @@ class Provider:
             tokens_in = sum(estimate_tokens(_message_text(m)) for m in body.get("messages", []))
             produced = text + "".join(json.dumps(c.args, ensure_ascii=False) for c in calls)
             tokens_out = estimate_tokens(produced)
-        return ChatResult(text, calls, tokens_in, tokens_out, choice.get("finish_reason"))
+        details = (usage or {}).get("completion_tokens_details") or {}
+        reasoning = bool(
+            message.get("reasoning_content") or message.get("reasoning") or details.get("reasoning_tokens")
+        )
+        return ChatResult(text, calls, tokens_in, tokens_out, choice.get("finish_reason"), reasoning)

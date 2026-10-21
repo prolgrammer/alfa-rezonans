@@ -59,6 +59,8 @@ VALIDATION_ATTEMPTS = 2
 ERROR_LIMIT = 500
 # Сколько токенов занимает картинка в оценке резерва: точное число зависит от модели и размера.
 IMAGE_TOKENS = 2000
+RAW_DEADLINE_S = 60.0
+CAPS_FILE = REPO_ROOT / ".models_caps.json"
 
 
 class Breaker:
@@ -130,6 +132,16 @@ class _Failed(Exception):
         super().__init__(message)
         # сбой не по вине модели (очередь, дедлайн, чужой запрос) предохранитель не считает
         self.model_fault = model_fault
+
+
+@dataclass
+class RawAnswer:
+    """Ответ одной модели без резерва и кэша: результат или ошибка провайдера (текст замаскирован)."""
+
+    result: ChatResult | None
+    error: ProviderError | None
+    ms: int
+    cost_rub: float
 
 
 @dataclass
@@ -299,8 +311,77 @@ class Gateway:
     def _actual_caps(self) -> Mapping[str, set[str]]:
         # файл с фактическими возможностями пишет probe; читаем один раз, при первой надобности
         if self._caps is None:
-            self._caps = load_caps(REPO_ROOT / ".models_caps.json")
+            self._caps = load_caps(CAPS_FILE)
         return self._caps
+
+    def check_configured(self) -> None:
+        try:
+            api_key, folder = self._secrets()
+        except ValidationError:
+            raise LLMNotConfigured("настройки сервиса не загружены: вызов модели невозможен") from None
+        if not api_key or not folder:
+            raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
+
+    async def provider(self, name: str) -> Provider:
+        self.check_configured()
+        await self._ready()
+        return self._providers[name]
+
+    async def raw_call(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        response_format: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        reasoning_off: bool = False,
+    ) -> RawAnswer:
+        """Один запрос к конкретной модели для probe (ML-2).
+
+        Без кэша, резерва модели и предохранителя: probe проверяет модель, а не задачу. Бюджет, слот
+        провайдера и строка llm_calls — как у обычного вызова. BudgetExceeded поднимается наружу.
+        """
+        if model not in ALLOWED_MODELS:
+            raise ValueError(f"модель {model!r} не входит в белый список кейса")
+        self.check_configured()
+        budget = await self._ready()
+        await budget.sync()
+        assert self._store is not None
+        cfg = self.config.task("probe")
+        mcfg = self.config.models[model]
+        provider = self._providers[mcfg.provider]
+        req = self._request("probe", cfg, "background", messages, None, None, None)
+        req.tools = tools
+        body: dict[str, Any] = {
+            "model": provider.uri(mcfg.uri),
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "messages": messages,
+        }
+        if response_format is not None:
+            body["response_format"] = response_format
+        if tools is not None:
+            body["tools"], body["tool_choice"] = tools, "auto"
+        if reasoning_off:
+            body["reasoning_effort"] = "none"
+        started = self._clock()
+        deadline = started + RAW_DEADLINE_S
+        row = self._new_row(req, model)
+        usage = _Usage()
+        result: ChatResult | None = None
+        error: ProviderError | None = None
+        try:
+            async with provider.slot("background", max(deadline - started - MIN_WINDOW_S, 0.001)):
+                with budget.hold("probe", cfg.essential, self._reserve_rub(req, mcfg)):
+                    result = await provider.chat(body, deadline=deadline)
+        except ProviderError as exc:
+            error = exc
+            row.error = str(exc)[:ERROR_LIMIT]
+        else:
+            usage.tokens_in, usage.tokens_out = result.tokens_in, result.tokens_out
+        self._charge(row, mcfg, usage)
+        await self._finish(row, started)
+        return RawAnswer(result, error, row.ms, row.cost_rub)
 
     def _secrets(self) -> tuple[str, str]:
         settings = self._settings or get_settings()
@@ -349,12 +430,7 @@ class Gateway:
     async def _run(self, req: _Request) -> BaseModel | ToolStepResult:
         # дедлайн отсчитываем с самого начала: подготовка к вызову тоже входит в бюджет времени полосы
         deadline = self._clock() + LANE_DEADLINE_S[req.lane]
-        try:
-            api_key, folder = self._secrets()
-        except ValidationError:
-            raise LLMNotConfigured("настройки сервиса не загружены: вызов модели невозможен") from None
-        if not api_key or not folder:
-            raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
+        self.check_configured()
         budget = await self._ready()
         await budget.sync()
         chain = self._chain(req.cfg, req.need_cap)

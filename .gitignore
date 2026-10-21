@@ -25,3 +25,6 @@ Thumbs.db
 # Данные организаторов — только локально
 data/*
 !data/README.md
+
+# Итог orientir llm probe: зависит от ключа, проверенное переносится в config/models.yaml
+.models_caps.json

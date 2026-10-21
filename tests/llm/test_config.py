@@ -67,7 +67,12 @@ def test_task_unknown_name_keyerror():
 def test_caps_file_overrides_declared(tmp_path):
     cfg = load_config(MODELS_YAML)
     path = tmp_path / "caps.json"
-    path.write_text(json.dumps({"glm-5.3-flash": ["json_object"]}), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {"probed_at": "x", "models": {"glm-5.3-flash": {"status": "ok", "caps": ["json_object"]}}}
+        ),
+        encoding="utf-8",
+    )
     actual = load_caps(path)
     assert cfg.caps("glm-5.3-flash", actual) == {"json_object"}
     assert cfg.caps("kimi-k2.6", actual) == {"json_schema", "json_object", "tools"}
@@ -81,3 +86,7 @@ def test_caps_file_missing_or_broken(tmp_path):
     wrong_shape = tmp_path / "list.json"
     wrong_shape.write_text("[1, 2]", encoding="utf-8")
     assert load_caps(wrong_shape) == {}
+    # прежний формат {"модель": [caps]} — тоже «не прочитан», а не возможности из ключей
+    old_format = tmp_path / "old.json"
+    old_format.write_text(json.dumps({"glm-5.3-flash": ["json_object"]}), encoding="utf-8")
+    assert load_caps(old_format) == {}

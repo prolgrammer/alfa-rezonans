@@ -231,3 +231,45 @@ async def test_deadline_and_400_are_not_model_fault(api, provider):
     with pytest.raises(Transient) as down:
         await provider.chat(BODY, deadline=FAR)
     assert down.value.model_fault is True
+
+
+@pytest.mark.parametrize(
+    ("message", "usage", "expected"),
+    [
+        ({"content": "ok"}, {"prompt_tokens": 1, "completion_tokens": 1}, False),
+        ({"content": "ok", "reasoning_content": "думаю"}, {"prompt_tokens": 1}, True),
+        ({"content": "ok", "reasoning": "думаю"}, None, True),
+        (
+            {"content": "ok"},
+            {
+                "prompt_tokens": 1,
+                "completion_tokens": 9,
+                "completion_tokens_details": {"reasoning_tokens": 8},
+            },
+            True,
+        ),
+    ],
+)
+async def test_reasoning_detected(api, provider, message, usage, expected):
+    api.post("/chat/completions").respond(200, json={"choices": [{"message": message}], "usage": usage})
+    assert (await provider.chat(BODY, deadline=FAR)).reasoning is expected
+
+
+async def test_list_models(api, provider):
+    route = api.get("/models").respond(200, json={"data": [{"id": "gpt://f/qwen3.6-35b-a3b"}, {"x": 1}]})
+    assert await provider.list_models() == ["gpt://f/qwen3.6-35b-a3b"]
+    assert route.calls.last.request.headers["authorization"] == f"Api-Key {KEY}"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(404), httpx.Response(200, json=[1]), httpx.Response(200, text="<html>")],
+)
+async def test_list_models_unavailable(api, provider, response):
+    api.get("/models").mock(return_value=response)
+    assert await provider.list_models() is None
+
+
+async def test_list_models_network_error(api, provider):
+    api.get("/models").mock(side_effect=httpx.ConnectError("нет сети"))
+    assert await provider.list_models() is None
