@@ -127,15 +127,20 @@ _scope: contextvars.ContextVar[Scope | None] = contextvars.ContextVar("llm_scope
 
 @contextlib.contextmanager
 def _run_hold(task: str, reserve_rub: float) -> Iterator[None]:
-    """Лимит запуска с резервом: параллельные вызовы одной области видят друг друга."""
+    """Лимит запуска: новый вызов не начинается, если потрачено и зарезервировано уже не меньше лимита.
+
+    Резерв самого вызова не входит: он оценка сверху (max_tokens, ×2 на рассуждения), и с ним
+    первый же шаг разбора на GLM (~3,6 ₽ резерва) не прошёл бы лимит 4 ₽, хотя стоит 1–2 ₽.
+    Перерасход — не больше одного вызова; строгий лимит держит дневной бюджет.
+    """
     scope = _scope.get()
     if scope is None or scope.limit_rub is None:
         yield
         return
-    if scope.cost_rub + scope.held + reserve_rub > scope.limit_rub:
+    if scope.cost_rub + scope.held >= scope.limit_rub:
         raise RunLimitExceeded(
-            f"лимит запуска исчерпан ({scope.cost_rub:.2f} из {scope.limit_rub:.2f} ₽, "
-            f"вызов до {reserve_rub:.2f} ₽): {task}"
+            f"лимит запуска исчерпан ({scope.cost_rub:.2f} ₽ потрачено, {scope.held:.2f} ₽ в работе, "
+            f"лимит {scope.limit_rub:.2f} ₽): {task}"
         )
     scope.held += reserve_rub
     try:

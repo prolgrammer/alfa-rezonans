@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from typing import NoReturn
 
@@ -44,6 +45,8 @@ from app.db import get_pool
 from app.llm import gw
 from app.llm.store import usage_since
 from app.rank.feed import explain, highlights, rank_feed
+
+log = logging.getLogger(__name__)
 
 
 def not_implemented(item: str) -> NoReturn:
@@ -130,7 +133,12 @@ class LiveBackend:
 
     async def llm_usage(self) -> LlmUsage:
         state = await gw.budget_state()
-        rows = await usage_since(await get_pool(), state.since)
+        try:
+            rows = await usage_since(await get_pool(), state.since)
+        except Exception as exc:
+            # без БД админка всё равно видит ступень и расход процесса, разбивки по задачам нет
+            log.warning("расход LLM по задачам не прочитан: БД недоступна (%s)", type(exc).__name__)
+            rows = []
         return LlmUsage(
             day=state.day,
             budget_rub=max(state.limit_rub, 0.0),

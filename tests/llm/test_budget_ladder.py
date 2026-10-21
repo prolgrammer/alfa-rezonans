@@ -158,11 +158,10 @@ async def test_budget_state(make_gw, store):
     assert (state.limit_rub, state.spent_rub, state.step) == (GW_LIMIT, 90, 2)
 
 
-async def test_run_limit_stops_chain(api, make_gw, store):
-    route = route_by_model(api, {PRIMARY: httpx.Response(503, text="down"), "glm-5.3-flash": GOOD})
-    gw = make_gw()
-    with llm_scope(limit_rub=0.0001) as scope, pytest.raises(RunLimitExceeded):
-        await call(gw)
+async def test_run_limit_zero_refuses_at_once(api, make_gw):
+    route = route_by_model(api, {PRIMARY: GOOD})
+    with llm_scope(limit_rub=0.0) as scope, pytest.raises(RunLimitExceeded):
+        await call(make_gw())
     assert not route.called
     assert scope.held == 0
     assert isinstance(RunLimitExceeded("x"), BudgetExceeded)
@@ -171,12 +170,42 @@ async def test_run_limit_stops_chain(api, make_gw, store):
 async def test_run_limit_counts_spent(api, make_gw):
     route_by_model(api, {PRIMARY: httpx.Response(200, json=GOOD_BIG)})
     gw = make_gw()
-    with llm_scope(limit_rub=1.0) as scope:
-        await call(gw, what="раз")
+    with llm_scope(limit_rub=0.5) as scope:
+        await call(gw, what="раз")  # перерасход — не больше одного вызова
         assert scope.cost_rub > 0.5
         with pytest.raises(RunLimitExceeded):
             await call(gw, what="два")
         assert scope.held == 0
+
+
+async def test_run_limit_with_real_prices_lets_insight_through(api, make_gw):
+    # резерв шага на GLM (~3,6 ₽ сверху) не должен сам по себе упираться в INSIGHT_MAX_RUB
+    route_by_model(api, {"glm-5.3-flash": GOOD})
+    gw = make_gw()
+    limit = make_settings().insight_max_rub
+    with llm_scope(limit_rub=limit) as scope:
+        await call(gw, "insight_plan", what="план " * 800, lane="interactive")
+        await call(gw, "insight_write", what="черновик " * 800, lane="interactive")
+    assert 0 < scope.cost_rub < limit
+
+
+async def test_run_limit_sees_parallel_holds(api, make_gw):
+    route = route_by_model(api, {PRIMARY: GOOD})
+    with llm_scope(limit_rub=4.0) as scope:
+        scope.held = 4.0  # параллельные вызовы области уже держат весь лимит
+        with pytest.raises(RunLimitExceeded):
+            await call(make_gw())
+    assert not route.called
+
+
+async def test_run_limit_stops_before_fallback(api, make_gw):
+    # основная модель дважды ответила мусором и съела лимит: резервную уже не зовём
+    broken = {**GOOD_BIG, "choices": [{"message": {"content": "{не json"}, "finish_reason": "stop"}]}
+    route = route_by_model(api, {PRIMARY: httpx.Response(200, json=broken), "glm-5.3-flash": GOOD})
+    with llm_scope(limit_rub=1.0) as scope, pytest.raises(RunLimitExceeded):
+        await call(make_gw())
+    assert route.call_count == 2
+    assert scope.cost_rub > 1.0
 
 
 async def test_run_limit_allows_cache(api, make_gw):

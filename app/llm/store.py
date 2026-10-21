@@ -147,10 +147,10 @@ class PgStore:
         return float(row["spent"] if isinstance(row, dict) else row[0])
 
 
-# Медиана задержки — без ответов из кэша: их 0 мс исказили бы задержку модели.
+# Медиана задержки и переключения на резерв — без ответов из кэша: это не вызовы модели.
 _USAGE_SQL = """
 SELECT task, model, count(*)::int AS calls, COALESCE(sum(cost_rub), 0)::float AS cost_rub,
-       count(fallback_from)::int AS fallbacks, count(error)::int AS errors,
+       count(fallback_from) FILTER (WHERE NOT cached)::int AS fallbacks, count(error)::int AS errors,
        COALESCE(round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ms) FILTER (WHERE NOT cached)), 0)::int
            AS p50_ms
 FROM llm_calls

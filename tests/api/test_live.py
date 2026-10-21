@@ -102,3 +102,22 @@ async def test_live_llm_usage(monkeypatch):
     )
     assert [t.task for t in usage.by_task] == ["chat"]
     assert seen["args"] == ("pool", since)
+
+
+async def test_live_llm_usage_without_db(monkeypatch):
+    from datetime import UTC, date, datetime
+
+    import app.api.live as live_module
+    from app.llm.budget import BudgetState
+
+    class FakeGateway:
+        async def budget_state(self):
+            return BudgetState(date(2026, 10, 21), 480.0, 400.0, 2, datetime(2026, 10, 20, 21, tzinfo=UTC))
+
+    async def no_pool():
+        raise OSError("нет БД")
+
+    monkeypatch.setattr(live_module, "gw", FakeGateway())
+    monkeypatch.setattr(live_module, "get_pool", no_pool)
+    usage = await LiveBackend().llm_usage()
+    assert (usage.ladder_step, usage.spent_rub, usage.by_task) == (2, 400.0, [])

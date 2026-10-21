@@ -41,6 +41,8 @@ async def test_usage_since_groups_by_task_and_model(pg_pool, db_conn):
         ("event_card", PRIMARY, 0.7, 300, False, None, "сбой", False),
         ("event_card", PRIMARY, 0.0, 0, True, None, None, False),
         ("event_card", FALLBACK, 0.4, 900, False, PRIMARY, None, False),
+        # повтор из кэша резервной модели — не переключение и не задержка модели
+        ("event_card", FALLBACK, 0.0, 0, True, PRIMARY, None, False),
         ("chat", PRIMARY, 2.0, 500, False, None, None, False),
         ("chat", PRIMARY, 9.0, 500, False, None, None, True),
     ]
@@ -75,7 +77,7 @@ async def test_usage_since_groups_by_task_and_model(pg_pool, db_conn):
         {
             "task": "event_card",
             "model": FALLBACK,
-            "calls": 1,
+            "calls": 2,
             "cost_rub": 0.4,
             "fallbacks": 1,
             "errors": 0,
