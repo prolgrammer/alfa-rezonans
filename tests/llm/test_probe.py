@@ -468,3 +468,19 @@ def test_cli_writes_finished_models_when_stopped(api, monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert "прогон остановлен" in result.output
     assert set(load_caps(target)) == {QWEN}
+
+
+def test_cli_all_models_unavailable_is_failure(api, monkeypatch, tmp_path):
+    async def no_db():
+        raise OSError("нет БД")
+
+    target = tmp_path / ".models_caps.json"
+    monkeypatch.setattr(gateway_module, "get_settings", lambda: make_settings())
+    monkeypatch.setattr(gateway_module, "CAPS_FILE", target)
+    monkeypatch.setattr("app.cli.get_pool", no_db)
+    route(api, lambda r: httpx.Response(403, text="PERMISSION_DENIED"))
+    api.get("/models").respond(403)
+
+    result = runner.invoke(cli_app, ["llm", "probe", "--model", QWEN])
+    assert result.exit_code == 1
+    assert "проверьте ключ" in result.output

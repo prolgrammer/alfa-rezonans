@@ -187,6 +187,10 @@ def llm_probe(
     if result.stopped:
         typer.echo(f"ошибка: прогон остановлен — {result.stopped}", err=True)
         raise typer.Exit(1)
+    if result.reports and all(r.status == "unavailable" for r in result.reports):
+        # так выглядит и неверный ключ у провайдера, который отвечает на него 403
+        typer.echo("ошибка: ни одна модель не доступна — проверьте ключ, каталог и LLM_BASE_URL", err=True)
+        raise typer.Exit(1)
 
 
 def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -211,11 +215,13 @@ async def _probe(config: "ModelsConfig", models: list[str]) -> "ProbeResult":
     except Exception as exc:
         typer.echo(f"БД недоступна ({type(exc).__name__}): вызовы probe не попадут в llm_calls", err=True)
         store = MemoryStore()
-    gw = Gateway(config, store=store)
+    gw: Gateway | None = None
     try:
+        gw = Gateway(config, store=store)
         return await run_probe(gw, models, on_model=lambda r: typer.echo(f"  {r.name}: {r.status}"))
     finally:
-        await gw.aclose()
+        if gw is not None:
+            await gw.aclose()
         await close_pool()
 
 
