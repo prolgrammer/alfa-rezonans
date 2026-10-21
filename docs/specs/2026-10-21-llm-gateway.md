@@ -51,14 +51,15 @@
 ```python
 from app.llm import gw, LLMUnavailable, llm_scope
 
-card = await gw.json("event_card", "event_card", {"sources": ...}, EventCardDraft,
-                     event_id=42, lane="background")
+card = await gw.json(
+    "event_card", "event_card", {"sources": ...}, EventCardDraft, event_id=42, lane="background"
+)
 step = await gw.tools_step("insight_plan", messages, tools, lane="interactive")
 chart = await gw.vision("chart_read", "chart_read", png_bytes, ChartReading)
 
-with llm_scope(trace_id="ins-…", event_id=42) as scope:   # добавлено
-    ...                                                    # все вызовы внутри помечаются trace_id
-scope.cost_rub, scope.calls                                # итог для трассы агента (ML-13)
+with llm_scope(trace_id="ins-…", event_id=42) as scope:  # добавлено
+    ...  # все вызовы внутри помечаются trace_id
+scope.cost_rub, scope.calls  # итог для трассы агента (ML-13)
 ```
 
 - `gw.json(task, prompt, vars, schema, *, event_id=None, lane="background") -> M`. `prompt` — имя шаблона `config/prompts/<prompt>.md`, `vars` — его переменные. Возвращает провалидированный экземпляр `schema`.
