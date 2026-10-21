@@ -57,7 +57,7 @@ _BLOCK_TAGS = frozenset(
 _HIDDEN_NAMES = "|".join(sorted(_HIDDEN_TAGS))
 # имя тега в HTML кончается пробелом, «/» или «>»: <scripts> и <script-x> — не <script>
 _HIDDEN_OPEN_RE = re.compile(rf"<(?=({_HIDDEN_NAMES})[\s/>])", re.I)
-_HIDDEN_CLOSE_RE = re.compile(rf"</({_HIDDEN_NAMES})[\s>]", re.I)
+_HIDDEN_CLOSE_RE = re.compile(rf"</({_HIDDEN_NAMES})[\s/>]", re.I)
 # тот же элемент закрывает предыдущий: <li>…<li>, <td>…<td>
 _IMPLICITLY_CLOSED = frozenset({"p", "li", "dt", "dd", "option", "tr", "td", "th"})
 # теги, которые по спецификации HTML закрывают открытый <p>; table — нет: зависит от режима документа,
@@ -279,10 +279,11 @@ def _skeleton(text: str, table: dict[int, int]) -> str:
 
 
 # Любое «<source», «</ source» и т. п. — граница нашего блока, поэтому без \b: «<sources» тоже.
-# Остальные имена — разметка ролей и шаблонов чата, которую модель может принять за служебную.
+# Остальные имена — разметка ролей и шаблонов чата, которую модель может принять за служебную, и
+# <script>/<style>, которые sanitize оставила текстом: браузер спрятал бы то, что идёт после них.
 _TAG_RE = re.compile(
     r"<\s*/?\s*(?:(?P<source>source)|(?:system|user|assistant|human|developer|instructions?|prompt"
-    r"|tool|im_start|im_end|endoftext)\b)[^<>\n]{0,80}>?",
+    r"|tool|im_start|im_end|endoftext|script|style|template|noscript)\b)[^<>\n]{0,80}>?",
     re.I,
 )
 _CHAT_TOKEN_RE = re.compile(r"<\|[^<>|\n]{1,40}\|>")
@@ -357,7 +358,7 @@ _RU_PATTERNS = [
     r"\bоцени(?:те)?\s+(?:\w+\s+){0,3}?(?:на\s+\d|в\s+\d|максимальн|наивысш|высш)",
     # «ответьте только на один вопрос» — анкета; команда — про форму ответа
     r"\b(?:отвечай|ответь)(?:те)?\s+(?:\w+\s+){0,1}?(?:только|лишь|исключительно)\s+"
-    r"(?:словом|одним|«|\"|'|да\b|нет\b|json|цифрой|числом)",
+    r"(?:словом|одним|«|\"|'|да\b|нет\b|ок\b|json|цифрой|числом)",
     r"\b(?:считай|признай|отметь|пометь)(?:те)?\s+(?:\w+\s+){0,2}?(?:новост|событи|публикаци|текст)\w*\s+"
     r"(?:\w+\s+){0,1}?(?:важн|релевантн|делов|бизнес)\w*",
     r"^[ \t]*(?:#{1,6}[ \t]*)?(?:системн\w*\s+сообщени\w*|ассистент)[ \t]*:",
@@ -376,6 +377,8 @@ _EN_PATTERNS = [
     r"\bsystem\s+prompt\b",
     r"\b(?:reveal|print|show|output|repeat|display)\s+(?:\w+\s+){0,2}?(?:prompt|instructions)\b",
     r"\b(?:respond|answer|reply)\s+(?:\w+\s+){0,2}?only\b",
+    # голая метка «System:» — только если за ней обращение к модели, а не цифры сводки
+    r"^[ \t]*system[ \t]*:[ \t]*(?:you\b|your\b|new\b|from\s+now)",
     r"\bset\s+(?:\w+\s+){0,3}?(?:relevance|score|rating)\s+(?:to|=|at)\b",
     r"\b(?:mark|classify|treat|label)\s+(?:this|the)\s+(?:news|article|item|text|story)\s+as\b",
     # «System: down 3%» встречается в сводках: без «###» помечаем только редкие в новостях метки ролей
