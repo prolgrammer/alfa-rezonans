@@ -129,3 +129,12 @@ async def test_lazy_store_does_not_wait_and_retries_rarely(pg_pool, db_conn):
 
     await store.record(CallRow(task="in-db", model="m", lane="background"))
     assert db_conn.execute("SELECT task FROM llm_calls").fetchall() == [("in-db",)]
+
+
+async def test_lazy_store_reports_no_spend_while_in_memory():
+    async def never_opens():
+        await asyncio.Event().wait()
+
+    store = LazyStore(never_opens)
+    await store.record(CallRow(task="t", model="m", lane="background", cost_rub=3.0))
+    assert await store.spent_since(datetime.now(UTC) - timedelta(days=1)) is None

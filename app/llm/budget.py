@@ -43,10 +43,12 @@ class Budget:
         self._roll()
         if self._store is None or self._clock() - self._synced_at < SYNC_EVERY_S:
             return
-        self._synced_at = self._clock()
         stored = await self._store.spent_since(self._day_start().astimezone(UTC))
-        if stored is not None:
-            self.spent = max(self.spent, stored)
+        if stored is None:
+            # сверки не было: следующий вызов попробует снова, не ждём минуту
+            return
+        self._synced_at = self._clock()
+        self.spent = max(self.spent, stored)
 
     @contextlib.contextmanager
     def hold(self, task: str, essential: bool, reserve_rub: float) -> Iterator[None]:

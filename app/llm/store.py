@@ -192,4 +192,6 @@ class LazyStore:
         await self._current().record(row)
 
     async def spent_since(self, start: datetime) -> float | None:
-        return await self._current().spent_since(start)
+        # расход других процессов виден только в БД; память отдаёт лишь свои вызовы, это не сверка
+        store = self._current()
+        return None if store is self._memory else await store.spent_since(start)

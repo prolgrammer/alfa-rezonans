@@ -94,3 +94,19 @@ async def test_sync_keeps_memory_when_store_unavailable():
     budget.add(4.0)
     await budget.sync()
     assert budget.spent == 4.0
+
+
+async def test_sync_retries_until_store_answers():
+    class Flaky(MemoryStore):
+        answers = [None, 5.0]
+
+        async def spent_since(self, start):
+            return self.answers.pop(0)
+
+    now = [0.0]
+    budget = Budget(10.0, store=Flaky(), clock=lambda: now[0])
+    await budget.sync()
+    assert budget.spent == 0
+    now[0] = 1.0
+    await budget.sync()
+    assert budget.spent == 5.0
