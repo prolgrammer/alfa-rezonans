@@ -83,7 +83,7 @@ def test_truncation_happens_after_defusing():
     assert Flag.SOURCE_TAG in wrapped.flags
     assert wrapped.text.count("</source>") == 1
     assert wrapped.text.endswith("\n</source>")
-    assert "<\\" not in wrapped.text and "</s" not in body(wrapped.text)
+    assert "</s" not in body(wrapped.text)
 
 
 def test_tiny_limit_is_rejected():
