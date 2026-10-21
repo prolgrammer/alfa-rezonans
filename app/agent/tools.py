@@ -52,7 +52,7 @@ class GetMarketDataArgs(ContractModel):
 
 class SearchNewsArgs(ContractModel):
     query: str = Field(max_length=200)
-    days: int = Field(default=30, ge=1, le=90)
+    days: int = Field(default=90, ge=1, le=90)
     factor: Slug | None = None
 
 

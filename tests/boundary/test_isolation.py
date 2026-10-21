@@ -8,7 +8,20 @@ import app
 from app.agent.tools import build_tools
 from app.contracts import Access, SessionCtx, UserRole
 
-ALLOWED = {"app.clients.profile.get_profile"}
+# Единственные места, где компания приходит не из SessionCtx, и почему это допустимо.
+ALLOWED = {
+    # профиль читают инструменты агента и API, уже получившие компанию из сессии
+    "app.clients.profile.get_profile",
+    # проверка существующей компании для переключения эксперта (маршрут закрыт Expert)
+    "app.api.backend.Backend.has_company",
+    "app.api.live.LiveBackend.has_company",
+    "app.api.mock.MockBackend.has_company",
+    # сравнение двух компаний — функция эксперта банка, компании в запросе (a, b)
+    "app.api.backend.Backend.compare",
+    "app.api.live.LiveBackend.compare",
+    "app.api.mock.MockBackend.compare",
+}
+FORBIDDEN_PARAMS = re.compile(r"^(company|company_.*|client_id)$")
 APP_DIR = Path(app.__file__).parent
 
 
@@ -30,13 +43,14 @@ def _public_callables(module):
                     yield f"{module.__name__}.{name}.{method_name}", method
 
 
-def test_no_function_takes_company_id():
+def test_no_function_takes_company_or_client_parameter():
     seen = 0
     offenders = []
     for module in _modules():
         for qualname, func in _public_callables(module):
             seen += 1
-            if qualname not in ALLOWED and "company_id" in inspect.signature(func).parameters:
+            params = inspect.signature(func).parameters
+            if qualname not in ALLOWED and any(FORBIDDEN_PARAMS.match(name) for name in params):
                 offenders.append(qualname)
     assert seen > 30
     assert not offenders
@@ -70,3 +84,8 @@ def test_get_profile_is_called_only_by_agent_tools_and_api():
         if re.search(r"\bget_profile\(", path.read_text(encoding="utf-8")) and not rel.startswith(allowed):
             offenders.append(rel)
     assert not offenders
+
+
+def test_allowlist_has_no_stale_entries():
+    existing = {qualname for module in _modules() for qualname, _ in _public_callables(module)}
+    assert ALLOWED <= existing
