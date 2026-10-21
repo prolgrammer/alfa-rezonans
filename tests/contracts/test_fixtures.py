@@ -43,7 +43,9 @@ REGISTRY: dict[str, TypeAdapter] = {
     "feed.json": TypeAdapter(dict[str, list[FeedItem]]),
     "relevance.json": TypeAdapter(dict[str, list[RelevanceScore]]),
     "insight.json": TypeAdapter(InsightResult),
+    "insight_it.json": TypeAdapter(InsightResult),
     "trace.json": TypeAdapter(list[AgentStep]),
+    "trace_it.json": TypeAdapter(list[AgentStep]),
     "chat_answer.json": TypeAdapter(ChatAnswer),
     "llm_usage.json": TypeAdapter(LlmUsage),
     "quality.json": TypeAdapter(Quality),
@@ -108,7 +110,6 @@ def test_fixture_ids_in_catalogs():
 def test_cross_refs():
     event_ids = {e.id for e in fx("events.json")}
     company_ids = {p.company_id for p in fx("profiles.json")}
-    result = fx("insight.json")
 
     assert {s.event_id for s in fx("sources.json")} <= event_ids
     for name in ("feed.json", "relevance.json", "counterparties.json"):
@@ -121,8 +122,22 @@ def test_cross_refs():
     theses = {t.id: t for t in fx("theses.json")}
     sources = {(s.event_id, s.raw_item_id) for s in fx("sources.json")}
     series = {s.series: {p.date for p in s.points} for s in fx("market.json")}
-    dev_keys = {f.key for p in fx("profiles.json") if p.company_id == "C-DEV-01" for f in p.features}
-    for ev in [*result.evidence, *fx("chat_answer.json").evidence]:
+    keys = {p.company_id: {f.key for f in p.features} for p in fx("profiles.json")}
+    # разбор и чат принадлежат компании: ссылки на признаки сверяем с её профилем
+    owned = [
+        (fx("insight.json"), "C-DEV-01"),
+        (fx("insight_it.json"), "C-IT-01"),
+        (fx("chat_answer.json"), "C-DEV-01"),
+    ]
+    for result, company in owned:
+        check_refs(result, keys[company], event_ids, sources, theses, series)
+    for result, company in owned[:2]:
+        for link in result.insight.why_it_matters:
+            assert set(link.feature_keys) <= keys[company]
+
+
+def check_refs(result, company_keys, event_ids, sources, theses, series):
+    for ev in result.evidence:
         ref = ev.ref
         if isinstance(ref, NewsRef):
             assert ref.event_id in event_ids
@@ -134,9 +149,7 @@ def test_cross_refs():
         elif isinstance(ref, MarketRef):
             assert ref.date in series[ref.series]
         elif isinstance(ref, FeatureRef):
-            assert ref.feature_key in dev_keys
-    for link in result.insight.why_it_matters:
-        assert set(link.feature_keys) <= dev_keys
+            assert ref.feature_key in company_keys
 
 
 def test_card_quotes_in_sources():
@@ -182,6 +195,22 @@ def test_profiles_are_rich_and_opposite_on_key_rate():
         assert len(profile.exposures) >= 5
     sign = {cid: next(e.sign for e in p.exposures if e.factor == "key_rate") for cid, p in profiles.items()}
     assert sign["C-DEV-01"] == -sign["C-IT-01"] != 0
+
+
+def test_it_trace_is_well_formed():
+    steps = fx("trace_it.json")
+    assert [s.seq for s in steps] == list(range(1, len(steps) + 1))
+    assert all(s.tool_call for s in steps if s.kind == StepKind.tool)
+    assert steps[-1].kind == StepKind.final
+
+
+def test_it_insight_differs_from_dev_insight():
+    dev, it = fx("insight.json").insight, fx("insight_it.json").insight
+    assert dev.impact.direction == "risk"
+    assert it.impact.direction == "opportunity"
+    assert it.headline == "Доходность размещения свободных денег сохранится дольше, чем ожидалось"
+    checks = fx("insight_it.json").checks
+    assert checks.statements_total - checks.removed == len(it.statements())
 
 
 def test_trace_covers_every_step_kind():

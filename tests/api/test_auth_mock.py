@@ -24,39 +24,64 @@ def test_login_with_wrong_password_is_unauthorized(anon):
     assert "set-cookie" not in response.headers
 
 
-def test_me_gives_csrf_token_and_expert_session(anon):
-    me = Me.model_validate(anon.get("/api/me").json())
+def test_me_gives_csrf_token_and_expert_session(logged_in):
+    me = Me.model_validate(logged_in.get("/api/me").json())
     assert me.csrf_token == MOCK_CSRF_TOKEN
     assert (me.company_id, me.user_role, me.access) == ("C-DEV-01", "cfo", "expert")
     assert me.company_name
 
 
-def test_logout_needs_csrf_and_clears_cookie(anon):
-    assert anon.post("/api/auth/logout").status_code == 403
-    response = anon.post("/api/auth/logout", headers={"X-CSRF-Token": MOCK_CSRF_TOKEN})
+def test_logout_needs_csrf_and_clears_cookie(logged_in):
+    assert logged_in.post("/api/auth/logout").status_code == 403
+    response = logged_in.post("/api/auth/logout", headers={"X-CSRF-Token": MOCK_CSRF_TOKEN})
     assert response.status_code == 200
     assert "orientir_session=" in response.headers["set-cookie"]
 
 
+def test_after_logout_session_routes_are_unauthorized(client):
+    assert client.get("/api/me").status_code == 200
+    assert client.post("/api/auth/logout").status_code == 200
+    response = client.get("/api/me")
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.parametrize("path", ["/api/me", "/api/feed", "/api/highlights", "/api/events/1", "/api/profile"])
+def test_routes_without_cookie_are_unauthorized(anon, path):
+    response = anon.get(path)
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthorized"
+
+
+def test_mutation_without_cookie_is_unauthorized(anon):
+    response = anon.post("/api/feedback", json=FEEDBACK, headers={"X-CSRF-Token": MOCK_CSRF_TOKEN})
+    assert response.status_code == 401
+
+
+def test_health_and_login_are_open(anon):
+    assert anon.get("/api/health").status_code == 200
+    assert anon.post("/api/auth/login", json={"login": "a", "password": "test-password"}).status_code == 200
+
+
 @pytest.mark.parametrize("headers", [{}, {"X-CSRF-Token": "wrong"}])
-def test_mutation_without_valid_csrf_is_forbidden(anon, headers):
-    response = anon.post("/api/feedback", json=FEEDBACK, headers=headers)
+def test_mutation_without_valid_csrf_is_forbidden(logged_in, headers):
+    response = logged_in.post("/api/feedback", json=FEEDBACK, headers=headers)
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "forbidden"
 
 
-def test_mutation_with_csrf_passes(anon):
-    response = anon.post("/api/feedback", json=FEEDBACK, headers={"X-CSRF-Token": MOCK_CSRF_TOKEN})
+def test_mutation_with_csrf_passes(logged_in):
+    response = logged_in.post("/api/feedback", json=FEEDBACK, headers={"X-CSRF-Token": MOCK_CSRF_TOKEN})
     assert response.status_code == 200
 
 
-def test_csrf_is_checked_before_body_validation(anon):
-    response = anon.post("/api/feedback", json={})
+def test_csrf_is_checked_before_body_validation(logged_in):
+    response = logged_in.post("/api/feedback", json={})
     assert response.status_code == 403
 
 
-def test_get_does_not_need_csrf(anon):
-    assert anon.get("/api/feed").status_code == 200
+def test_get_does_not_need_csrf(logged_in):
+    assert logged_in.get("/api/feed").status_code == 200
 
 
 def test_demo_switch_changes_company_for_me_and_feed(client):
@@ -74,8 +99,8 @@ def test_demo_switch_to_unknown_company_is_404(client):
     assert client.get("/api/me").json()["company_id"] == "C-DEV-01"
 
 
-def test_demo_switch_needs_csrf(anon):
-    response = anon.post("/api/demo/switch", json={"company_id": "C-IT-01", "user_role": "cfo"})
+def test_demo_switch_needs_csrf(logged_in):
+    response = logged_in.post("/api/demo/switch", json={"company_id": "C-IT-01", "user_role": "cfo"})
     assert response.status_code == 403
 
 

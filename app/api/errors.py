@@ -1,4 +1,6 @@
 import logging
+import traceback
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -8,6 +10,7 @@ from pydantic import JsonValue
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.contracts._base import ContractModel
+from app.errors import NotFound
 from app.llm.gateway import LLMUnavailable
 
 log = logging.getLogger("orientir.api")
@@ -58,7 +61,7 @@ def error_body(exc: BaseException) -> tuple[int, ErrorBody]:
     """Единое соответствие исключения и тела ошибки: им пользуются и обработчики, и кадр `error` в SSE."""
     if isinstance(exc, ApiError):
         return exc.status, exc.body
-    if isinstance(exc, LookupError):
+    if isinstance(exc, NotFound):
         return 404, _body("not_found", "Не найдено")
     if isinstance(exc, LLMUnavailable):
         return 503, _body("llm_unavailable", "Модель сейчас недоступна")
@@ -66,8 +69,10 @@ def error_body(exc: BaseException) -> tuple[int, ErrorBody]:
         status = exc.status_code
         code = _CODE_BY_STATUS.get(status, "invalid_request" if status < 500 else "internal_error")
         return status, _body(code, str(exc.detail))
-    # причину пишем в журнал, а не клиенту: в тексте исключения могут быть внутренние детали
-    log.error("необработанная ошибка", exc_info=exc)
+    # В журнал идут тип и место ошибки, без текста исключения и трассировки: в них бывают данные клиента.
+    frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
+    where = f"{Path(frame.filename).name}:{frame.lineno}" if frame else "?"
+    log.error("необработанная ошибка %s в %s", type(exc).__name__, where)
     return 500, _body("internal_error", "Внутренняя ошибка сервиса")
 
 
@@ -97,5 +102,5 @@ def install_handlers(app: FastAPI) -> None:
         return _respond(422, body)
 
     app.add_exception_handler(RequestValidationError, handle_validation)
-    for exc_type in (ApiError, StarletteHTTPException, LookupError, LLMUnavailable, Exception):
+    for exc_type in (ApiError, StarletteHTTPException, NotFound, LLMUnavailable, Exception):
         app.add_exception_handler(exc_type, handle)

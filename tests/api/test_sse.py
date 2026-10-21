@@ -8,6 +8,7 @@ from app.agent import run
 from app.api import mock
 from app.api.errors import ErrorBody
 from app.contracts import AgentStep, ChatAnswer, InsightResult
+from app.errors import NotFound
 from app.fixtures import load_fixture
 
 STEP_COUNT = len(load_fixture("trace.json", TypeAdapter(list[AgentStep])))
@@ -44,11 +45,18 @@ def test_reconnect_gets_only_frames_after_last_event_id(client):
     assert resumed == full[3:]
 
 
-def test_reconnect_after_done_gets_empty_stream(client):
+@pytest.mark.parametrize("extra", [0, 5])
+def test_reconnect_after_done_gets_204(client, extra):
     done_id = len(parse(client.get("/api/insights/1/stream").text))
-    response = client.get("/api/insights/1/stream", headers={"Last-Event-ID": str(done_id)})
-    assert response.status_code == 200
+    response = client.get("/api/insights/1/stream", headers={"Last-Event-ID": str(done_id + extra)})
+    assert response.status_code == 204
     assert response.text == ""
+
+
+def test_chat_reconnect_after_done_gets_204(client):
+    body = {"event_id": 1, "question": "Что именно говорит банк?"}
+    response = client.post("/api/chat", json=body, headers={"Last-Event-ID": "5"})
+    assert response.status_code == 204
 
 
 @pytest.mark.parametrize("header", ["abc", "-1", ""])
@@ -78,7 +86,7 @@ def test_chat_question_length_is_validated(client):
 
 
 def test_generator_failure_becomes_error_frame_then_done(client, monkeypatch):
-    async def broken(after):
+    async def broken(insight_file, trace_file, after):
         yield load_fixture("trace.json", TypeAdapter(list[AgentStep]))[0]
         raise RuntimeError("внутренняя причина")
 
@@ -93,8 +101,8 @@ def test_generator_failure_becomes_error_frame_then_done(client, monkeypatch):
 
 
 def test_domain_error_in_generator_keeps_its_code(client, monkeypatch):
-    async def missing(after):
-        raise LookupError("нет данных")
+    async def missing(insight_file, trace_file, after):
+        raise NotFound("нет данных")
         yield
 
     monkeypatch.setattr(mock, "_insight_stream", missing)
@@ -132,3 +140,16 @@ def test_chat_reconnect_does_not_pause_for_frames_already_delivered(client, slee
     resumed = parse(client.post("/api/chat", json=body, headers={"Last-Event-ID": "2"}).text)
     assert [f["event"] for f in resumed] == ["step", "answer", "done"]
     assert sleeps == [0.5]
+
+
+def test_unexpected_lookup_error_in_generator_is_internal_error(client, monkeypatch):
+    async def broken(insight_file, trace_file, after):
+        raise KeyError("секретный ключ")
+        yield
+
+    monkeypatch.setattr(mock, "_insight_stream", broken)
+    response = client.get("/api/insights/1/stream")
+    frames = parse(response.text)
+    assert [f["event"] for f in frames] == ["error", "done"]
+    assert frames[0]["data"]["error"]["code"] == "internal_error"
+    assert "секретный ключ" not in response.text

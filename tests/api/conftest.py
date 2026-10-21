@@ -42,6 +42,14 @@ def anon(mock_app) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def client(anon) -> TestClient:
-    anon.headers["X-CSRF-Token"] = MOCK_CSRF_TOKEN
+def logged_in(anon) -> TestClient:
+    """Клиент с cookie сессии, но без заголовка CSRF."""
+    response = anon.post("/api/auth/login", json={"login": "anna", "password": "test-password"})
+    assert response.status_code == 200
     return anon
+
+
+@pytest.fixture
+def client(logged_in) -> TestClient:
+    logged_in.headers["X-CSRF-Token"] = MOCK_CSRF_TOKEN
+    return logged_in

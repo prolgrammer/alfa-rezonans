@@ -36,6 +36,9 @@ def get_backend(request: Request) -> Backend:
 def get_mock_session(request: Request) -> MockSession:
     if not request.app.state.settings.mock:
         raise ApiError(401, "unauthorized", "Вход ещё не реализован (BE-9)")
+    # Сессия в MOCK одна, но вход обязателен: так интерфейс проверяет ветку «401 -> экран входа».
+    if SESSION_COOKIE not in request.cookies:
+        raise ApiError(401, "unauthorized", "Нужно войти")
     return request.app.state.mock_session
 
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from fastapi import Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
@@ -70,11 +70,24 @@ async def _frames(events: AsyncIterator[SseEvent], last_event_id: int | None) ->
             yield _frame(n, event)
 
 
-def sse_response(events: AsyncIterator[SseEvent], last_event_id: int | None) -> EventStreamResponse:
-    return EventStreamResponse(
-        _frames(events, last_event_id),
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+async def _chain(first: str, rest: AsyncIterator[str]) -> AsyncIterator[str]:
+    yield first
+    async for frame in rest:
+        yield frame
+
+
+async def sse_response(events: AsyncIterator[SseEvent], last_event_id: int | None) -> Response:
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    frames = _frames(events, last_event_id)
+    if last_event_id:
+        # Все кадры уже доставлены: 204 останавливает автопереподключение EventSource, а пустой 200 — нет.
+        # Первый кадр читаем заранее только при переподключении: обычный поток начинает отдачу сразу.
+        try:
+            first = await anext(frames)
+        except StopAsyncIteration:
+            return Response(status_code=204, headers=headers)
+        frames = _chain(first, frames)
+    return EventStreamResponse(frames, headers=headers)
 
 
 INSIGHT_STREAM_MODELS = (AgentStep, InsightResult, ErrorBody)

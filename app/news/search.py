@@ -3,6 +3,7 @@ import datetime as dt
 from pydantic import TypeAdapter
 
 from app.contracts import BankChunk, NewsHit, SourceFragment, ThesisItem
+from app.errors import NotFound
 from app.fixtures import load_fixture
 
 _HITS = TypeAdapter(list[NewsHit])
@@ -35,5 +36,5 @@ async def search_bank_chunks(
 async def get_event_sources(event_id: int, hint: str | None = None) -> list[SourceFragment]:
     rows = [s for s in load_fixture("sources.json", _SOURCES) if s.event_id == event_id]
     if not rows:
-        raise LookupError(f"публикации события {event_id} не найдены")
+        raise NotFound(f"публикации события {event_id} не найдены")
     return sorted(rows, key=lambda s: s.n)

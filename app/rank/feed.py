@@ -10,6 +10,7 @@ from app.contracts import (
     SessionCtx,
     UserRole,
 )
+from app.errors import NotFound
 from app.fixtures import load_fixture
 
 _FEED = TypeAdapter(dict[str, list[FeedItem]])
@@ -21,7 +22,7 @@ HIGHLIGHTS = 3
 def _feed_of(company_id: str) -> list[FeedItem]:
     feed = load_fixture("feed.json", _FEED)
     if company_id not in feed:
-        raise LookupError(f"лента компании {company_id} не найдена")
+        raise NotFound(f"лента компании {company_id} не найдена")
     return sorted(feed[company_id], key=lambda i: -i.score)
 
 
@@ -42,7 +43,7 @@ async def explain(ctx: SessionCtx, event_id: int) -> RelevanceScore:
     for row in rows:
         if row.event_id == event_id:
             return row
-    raise LookupError(f"оценки события {event_id} для компании {ctx.company_id} нет")
+    raise NotFound(f"оценки события {event_id} для компании {ctx.company_id} нет")
 
 
 # заглушка до DQ-11

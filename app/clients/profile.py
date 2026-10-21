@@ -1,6 +1,7 @@
 from pydantic import JsonValue, TypeAdapter
 
 from app.contracts import CompactProfile, CompanyProfile, UserRole
+from app.errors import NotFound
 from app.fixtures import load_fixture
 
 _PROFILES = TypeAdapter(list[CompanyProfile])
@@ -14,7 +15,7 @@ async def get_profile(company_id: str) -> CompanyProfile:
     for profile in load_fixture("profiles.json", _PROFILES):
         if profile.company_id == company_id:
             return profile
-    raise LookupError(f"профиль компании {company_id} не найден")
+    raise NotFound(f"профиль компании {company_id} не найден")
 
 
 # заглушка до DQ-2

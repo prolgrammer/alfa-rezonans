@@ -35,3 +35,9 @@ def test_api_still_works_beside_spa(web):
 def test_no_web_dist_means_no_spa(make_settings, tmp_path):
     with TestClient(create_app(make_settings(web_dist=tmp_path / "missing"))) as client:
         assert client.get("/").status_code == 404
+
+
+def test_wrong_method_under_api_is_405_not_index(web):
+    response = web.get("/api/chat")
+    assert response.status_code == 405
+    assert response.json()["error"]["code"] == "invalid_request"

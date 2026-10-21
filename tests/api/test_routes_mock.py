@@ -162,6 +162,52 @@ def test_thesis_verification_is_visible_in_list(client):
 
 def test_start_insight_reports_cache_by_feed(client):
     cached = InsightStart.model_validate(client.post("/api/events/1/insight").json())
-    fresh = InsightStart.model_validate(client.post("/api/events/2/insight").json())
-    assert (cached.cached, fresh.cached) == (True, False)
-    assert cached.insight_id == 1
+    assert (cached.cached, cached.status, cached.insight_id) == (True, "done", 1)
+    client.post("/api/demo/switch", json={"company_id": "C-IT-01", "user_role": "cfo"})
+    fresh = InsightStart.model_validate(client.post("/api/events/1/insight").json())
+    assert (fresh.cached, fresh.status) == (False, "running")
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/events/2/insight"),
+        ("GET", "/api/insights/2/stream"),
+        ("GET", "/api/insights/3/trace"),
+    ],
+)
+def test_insight_routes_serve_only_pairs_with_a_fixture(client, method, path):
+    response = client.request(method, path)
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+
+
+def test_each_company_gets_its_own_insight_and_trace(client):
+    dev = client.get("/api/insights/1/trace").json()
+    dev_stream = client.get("/api/insights/1/stream").text
+    client.post("/api/demo/switch", json={"company_id": "C-IT-01", "user_role": "cfo"})
+    it = client.get("/api/insights/1/trace").json()
+    it_stream = client.get("/api/insights/1/stream").text
+    assert len(dev["steps"]) != len(it["steps"])
+    assert "Доходность размещения свободных денег" in it_stream
+    assert "Доходность размещения свободных денег" not in dev_stream
+    assert "C-IT-01" in it["steps"][-1]["output"]
+
+
+def test_compare_returns_two_different_insights(client):
+    compare = Compare.model_validate(client.get("/api/compare?event=1&a=C-DEV-01&b=C-IT-01").json())
+    assert compare.a.insight and compare.b.insight
+    assert compare.a.insight.insight.impact.direction == "risk"
+    assert compare.b.insight.insight.impact.direction == "opportunity"
+
+
+def test_compare_has_no_insight_for_pair_without_fixture(client):
+    compare = Compare.model_validate(client.get("/api/compare?event=2&a=C-DEV-01&b=C-IT-01").json())
+    assert compare.a.insight is None and compare.b.insight is None
+
+
+def test_wrong_method_on_known_path_is_405_in_error_shape(client):
+    response = client.get("/api/chat")
+    assert response.status_code == 405
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert "POST" in response.json()["error"]["message"]

@@ -24,4 +24,4 @@ router = APIRouter(tags=["chat"], dependencies=[Depends(require_csrf)], response
 async def chat(body: ChatRequest, request: Request, ctx: Session, backend: BackendDep):
     last_id = last_event_id(request)
     events = await backend.chat(ctx, body, last_id or 0)
-    return sse_response(events, last_id)
+    return await sse_response(events, last_id)

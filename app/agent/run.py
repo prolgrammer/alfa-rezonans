@@ -13,6 +13,7 @@ from app.contracts import (
     SessionCtx,
     StepKind,
 )
+from app.errors import NotFound
 from app.fixtures import load_fixture
 
 # Пауза между шагами имитирует работу агента, чтобы интерфейс видел живой поток. Тесты ставят (0, 0).
@@ -28,7 +29,7 @@ _CHAT_KINDS = (StepKind.plan, StepKind.tool, StepKind.final)
 
 def _require_event(event_id: int) -> None:
     if all(e.id != event_id for e in load_fixture("events.json", _EVENTS)):
-        raise LookupError(f"событие {event_id} не найдено")
+        raise NotFound(f"событие {event_id} не найдено")
 
 
 async def _pause() -> None:

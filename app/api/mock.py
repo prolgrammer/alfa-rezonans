@@ -45,6 +45,7 @@ from app.contracts import (
     StepKind,
     ThesisItem,
 )
+from app.errors import NotFound
 from app.fixtures import load_fixture
 from app.news.search import get_event_sources
 from app.rank.feed import explain, rank_feed
@@ -66,8 +67,12 @@ _CHAT_ANSWER = TypeAdapter(ChatAnswer)
 _COMPANY_NAMES = {"C-DEV-01": "ООО «Стройинвест» (демо)", "C-IT-01": "ООО «Нордсофт» (демо)"}
 # Соответствие фактор → ряд появится в config/factors.yaml (DQ-6); пока в фикстурах два ряда
 _FACTOR_SERIES = {"key_rate": "cbr_key_rate", "cny_rub": "cbr_cny"}
-# Разбор в фикстуре один: событие 1 для C-DEV-01
-_INSIGHT_OWNER = ("C-DEV-01", 1)
+# Готовые разборы: пара «компания, событие» -> (файл разбора, файл трассы). Номер разбора в MOCK равен
+# номеру события, поэтому для остальных пар разбора нет и API честно отвечает «не найдено».
+_INSIGHTS = {
+    ("C-DEV-01", 1): ("insight.json", "trace.json"),
+    ("C-IT-01", 1): ("insight_it.json", "trace_it.json"),
+}
 MARKET_DAYS = 90
 _CHAT_KINDS = (StepKind.plan, StepKind.tool, StepKind.final)
 
@@ -82,11 +87,18 @@ async def _paced(
         yield item
 
 
+def _insight_files(ctx: SessionCtx, event_id: int) -> tuple[str, str]:
+    try:
+        return _INSIGHTS[(ctx.company_id, event_id)]
+    except KeyError:
+        raise NotFound(f"разбора события {event_id} для {ctx.company_id} нет") from None
+
+
 async def _insight_stream(
-    after: int,
+    insight_file: str, trace_file: str, after: int
 ) -> AsyncIterator[AgentStep | InsightResult | ChatAnswer]:
-    items: list[AgentStep | InsightResult | ChatAnswer] = [*load_fixture("trace.json", _TRACE)]
-    items.append(load_fixture("insight.json", _INSIGHT))
+    items: list[AgentStep | InsightResult | ChatAnswer] = [*load_fixture(trace_file, _TRACE)]
+    items.append(load_fixture(insight_file, _INSIGHT))
     async for item in _paced(items, after):
         yield item
 
@@ -119,7 +131,7 @@ class MockBackend(LiveBackend):
         for event in load_fixture("events.json", _EVENTS):
             if event.id == event_id:
                 return event
-        raise LookupError(f"событие {event_id} не найдено")
+        raise NotFound(f"событие {event_id} не найдено")
 
     async def company_name(self, ctx: SessionCtx) -> str:
         return _COMPANY_NAMES.get(ctx.company_id, ctx.company_id)
@@ -147,6 +159,7 @@ class MockBackend(LiveBackend):
 
     async def start_insight(self, ctx: SessionCtx, event_id: int) -> InsightStart:
         self._event(event_id)
+        _insight_files(ctx, event_id)
         feed = await rank_feed(ctx, Period.month, FeedFilters())
         cached = any(i.event_id == event_id and i.insight_id is not None for i in feed)
         status = InsightStatus.done if cached else InsightStatus.running
@@ -155,11 +168,13 @@ class MockBackend(LiveBackend):
 
     async def stream_insight(self, ctx: SessionCtx, insight_id: int, after: int) -> AsyncIterator[SseEvent]:
         self._event(insight_id)
-        return agent_events(_insight_stream(after))
+        insight_file, trace_file = _insight_files(ctx, insight_id)
+        return agent_events(_insight_stream(insight_file, trace_file, after))
 
     async def trace(self, ctx: SessionCtx, insight_id: int) -> Trace:
         self._event(insight_id)
-        return Trace(insight_id=insight_id, steps=load_fixture("trace.json", _TRACE))
+        _, trace_file = _insight_files(ctx, insight_id)
+        return Trace(insight_id=insight_id, steps=load_fixture(trace_file, _TRACE))
 
     async def chat(self, ctx: SessionCtx, body: ChatRequest, after: int) -> AsyncIterator[SseEvent]:
         if body.event_id is not None:
@@ -194,24 +209,21 @@ class MockBackend(LiveBackend):
 
     async def compare(self, ctx: SessionCtx, event_id: int, a: str, b: str) -> Compare:
         self._event(event_id)
-        insight = load_fixture("insight.json", _INSIGHT)
 
         async def side(company: str) -> CompareSide:
             if not await self.has_company(company):
-                raise LookupError(f"компания {company} не найдена")
+                raise NotFound(f"компания {company} не найдена")
             as_company = ctx.model_copy(update={"company_id": company})
             feed = await rank_feed(as_company, Period.month, FeedFilters())
-            return CompareSide(
-                company_id=company,
-                feed=feed,
-                insight=insight if (company, event_id) == _INSIGHT_OWNER else None,
-            )
+            files = _INSIGHTS.get((company, event_id))
+            insight = load_fixture(files[0], _INSIGHT) if files else None
+            return CompareSide(company_id=company, feed=feed, insight=insight)
 
         return Compare(event_id=event_id, a=await side(a), b=await side(b))
 
     async def bank_page(self, doc_id: int, page: int) -> bytes:
         if all(t.doc_id != doc_id for t in load_fixture("theses.json", _THESES)):
-            raise LookupError(f"документ {doc_id} не найден")
+            raise NotFound(f"документ {doc_id} не найден")
         return (get_settings().fixtures_dir / "bank_page.png").read_bytes()
 
     async def feedback(self, ctx: SessionCtx, body: FeedbackIn) -> None:
@@ -219,7 +231,7 @@ class MockBackend(LiveBackend):
 
     async def expert_review(self, ctx: SessionCtx, body: ReviewIn) -> None:
         if all(r.insight_id != body.insight_id for r in load_fixture("review_queue.json", _REVIEW_QUEUE)):
-            raise LookupError(f"разбора {body.insight_id} нет в очереди")
+            raise NotFound(f"разбора {body.insight_id} нет в очереди")
 
     async def review_queue(self) -> list[ReviewQueueItem]:
         return load_fixture("review_queue.json", _REVIEW_QUEUE)
@@ -244,6 +256,6 @@ class MockBackend(LiveBackend):
 
     async def verify_thesis(self, thesis_id: int, verified: bool) -> ThesisItem:
         if all(t.id != thesis_id for t in await self.theses()):
-            raise LookupError(f"тезис {thesis_id} не найден")
+            raise NotFound(f"тезис {thesis_id} не найден")
         self._verified[thesis_id] = verified
         return next(t for t in await self.theses() if t.id == thesis_id)
