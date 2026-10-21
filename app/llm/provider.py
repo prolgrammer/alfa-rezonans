@@ -183,6 +183,9 @@ class Provider:
             await self._sleep(pause)
         raise Transient(last, status)
 
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
     async def list_models(self) -> list[str] | None:
         """Идентификаторы моделей из GET /models; None, если провайдер список не отдаёт."""
         try:

@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 import pytest
-from llm_support import KEY, bodies, make_settings
+from llm_support import FOLDER, KEY, bodies, make_settings, model_of
 from typer.testing import CliRunner
 
 from app.cli import app as cli_app
@@ -97,11 +97,107 @@ async def test_bad_request_naming_model_is_unavailable(api, make_gw):
     assert (await probe.probe_model(make_gw(), QWEN)).status == "unavailable"
 
 
-@pytest.mark.parametrize("status", [401, 403])
-async def test_rejected_key_stops_probe(api, make_gw, status):
-    route(api, lambda r: httpx.Response(status, text="denied"))
+async def test_rejected_key_stops_probe(api, make_gw):
+    route(api, lambda r: httpx.Response(401, text="denied"))
     with pytest.raises(ProbeAuthError):
         await probe.probe_model(make_gw(), QWEN)
+
+
+async def test_forbidden_model_is_unavailable(api, make_gw):
+    # модель не подключена каталогу — это про неё, а не про ключ
+    route(api, lambda r: httpx.Response(403, text="PERMISSION_DENIED"))
+    assert (await probe.probe_model(make_gw(), QWEN)).status == "unavailable"
+
+
+async def test_run_stops_on_rejected_key_but_keeps_finished(api, make_gw):
+    def handler(request):
+        return capable(request) if model_of(request) == QWEN else httpx.Response(401, text="no")
+
+    route(api, handler)
+    api.get("/models").respond(404)
+    result = await probe.run_probe(make_gw(), [QWEN, "kimi-k2.6", "glm-5.3-flash"])
+    assert [r.name for r in result.reports] == [QWEN]
+    assert "отверг ключ" in (result.stopped or "")
+
+
+async def test_run_stops_on_budget(api, make_gw):
+    route(api, capable)
+    api.get("/models").respond(404)
+    result = await probe.run_probe(make_gw(settings=make_settings(llm_daily_budget_rub=0.0)), [QWEN])
+    assert result.reports == [] and "бюджет" in (result.stopped or "")
+
+
+async def test_one_trace_id_per_run(api, make_gw, store):
+    route(api, capable)
+    api.get("/models").respond(404)
+    await probe.run_probe(make_gw(), [QWEN, "kimi-k2.6"])
+    (trace,) = {r.trace_id for r in store.rows}
+    assert trace.startswith("probe-")
+
+
+async def test_truncated_answer_is_unknown_not_missing(api, make_gw):
+    # рассуждает и параметр не принимает: проверки оборваны по max_tokens — это не «не умеет»
+    def handler(request):
+        body = json.loads(request.content)
+        if "reasoning_effort" in body:
+            return httpx.Response(400, text="unknown parameter reasoning_effort")
+        if body["messages"][0]["content"] == probe.SIMPLE_PROMPT:
+            return reply("Париж", reasoning_content="долго думаю")
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+        )
+
+    route(api, handler)
+    report = await probe.probe_model(make_gw(), QWEN)
+    assert all(report.checks[cap].ok is None for cap in probe.CAPS)
+    assert "оборван" in report.checks["json_schema"].note
+    assert report.caps == sorted(CONFIG.models[QWEN].caps)
+
+
+@pytest.mark.parametrize(("tokens_out", "expected"), [(5, False), (25, None), (120, True)])
+async def test_reasoning_inferred_from_tokens(api, make_gw, tokens_out, expected):
+    def handler(request):
+        body = json.loads(request.content)
+        if body["messages"][0]["content"] == probe.SIMPLE_PROMPT and "reasoning_effort" not in body:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "Париж"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 20, "completion_tokens": tokens_out},
+                },
+            )
+        return capable(request, reasons=False)
+
+    route(api, handler)
+    assert (await probe.probe_model(make_gw(), QWEN)).reasoning_default is expected
+
+
+async def test_param_accepted_but_still_reasoning(api, make_gw):
+    route(api, lambda r: reply("Париж", reasoning_content="всё равно думаю"))
+    report = await probe.probe_model(make_gw(), QWEN)
+    assert report.reasoning_off_param is False
+    assert "всё равно" not in report.checks["reasoning_off"].note
+    assert "параметр принят, но модель рассуждала" in report.checks["reasoning_off"].note
+
+
+@pytest.mark.parametrize(("status", "expected"), [(422, False), (405, False), (429, None), (500, None)])
+async def test_capability_check_status(api, make_gw, status, expected):
+    def handler(request):
+        body = json.loads(request.content)
+        return httpx.Response(status, text="nope") if "tools" in body else capable(request)
+
+    route(api, handler)
+    assert (await probe.probe_model(make_gw(), QWEN)).checks["tools"].ok is expected
+
+
+async def test_unexpected_client_error_is_recorded(api, make_gw, store):
+    def handler(request):
+        raise RuntimeError(f"сломалось {KEY}")
+
+    route(api, handler)
+    report = await probe.probe_model(make_gw(), QWEN)
+    assert report.status == "error"
+    assert store.rows and KEY not in (store.rows[0].error or "")
 
 
 async def test_simple_failing_is_error(api, make_gw):
@@ -333,7 +429,9 @@ def test_cli_full_run(api, monkeypatch, tmp_path):
     assert "Каталог провайдера: недоступен" in result.output
     assert "не попадут в llm_calls" in result.output
     assert load_caps(target) == {QWEN: {"json_object", "json_schema", "tools", "vision"}}
-    assert KEY not in result.output
+    written = target.read_text(encoding="utf-8")
+    for secret in (KEY, FOLDER):
+        assert secret not in result.output and secret not in written
 
 
 def test_cli_rejected_key_writes_nothing(api, monkeypatch, tmp_path):
@@ -350,3 +448,39 @@ def test_cli_rejected_key_writes_nothing(api, monkeypatch, tmp_path):
     result = runner.invoke(cli_app, ["llm", "probe", "--model", QWEN])
     assert result.exit_code == 1
     assert not target.exists()
+
+
+def test_cli_writes_finished_models_when_stopped(api, monkeypatch, tmp_path):
+    async def no_db():
+        raise OSError("нет БД")
+
+    def handler(request):
+        return capable(request) if model_of(request) == QWEN else httpx.Response(401, text="no")
+
+    target = tmp_path / ".models_caps.json"
+    monkeypatch.setattr(gateway_module, "get_settings", lambda: make_settings())
+    monkeypatch.setattr(gateway_module, "CAPS_FILE", target)
+    monkeypatch.setattr("app.cli.get_pool", no_db)
+    route(api, handler)
+    api.get("/models").respond(404)
+
+    result = runner.invoke(cli_app, ["llm", "probe", "--model", QWEN, "--model", "kimi-k2.6"])
+    assert result.exit_code == 1
+    assert "прогон остановлен" in result.output
+    assert set(load_caps(target)) == {QWEN}
+
+
+def test_cli_all_models_unavailable_is_failure(api, monkeypatch, tmp_path):
+    async def no_db():
+        raise OSError("нет БД")
+
+    target = tmp_path / ".models_caps.json"
+    monkeypatch.setattr(gateway_module, "get_settings", lambda: make_settings())
+    monkeypatch.setattr(gateway_module, "CAPS_FILE", target)
+    monkeypatch.setattr("app.cli.get_pool", no_db)
+    route(api, lambda r: httpx.Response(403, text="PERMISSION_DENIED"))
+    api.get("/models").respond(403)
+
+    result = runner.invoke(cli_app, ["llm", "probe", "--model", QWEN])
+    assert result.exit_code == 1
+    assert "проверьте ключ" in result.output
