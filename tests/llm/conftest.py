@@ -44,6 +44,9 @@ def prompts_dir(tmp_path):
     (directory / "demo.md").write_text(
         "---\ntask: event_card\nversion: 1\n---\nСкажи {{ what }}", encoding="utf-8"
     )
+    (directory / "plain.md").write_text(
+        "---\ntask: chart_read\nversion: 1\n---\nПрочитай график", encoding="utf-8"
+    )
     return directory
 
 

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import contextvars
 import hashlib
@@ -139,10 +140,12 @@ class _Request:
     cfg: TaskCfg
     lane: Lane
     messages: list[dict[str, Any]]
-    schema: type[BaseModel]
-    prompt_version: str
+    schema: type[BaseModel] | None  # None: шаг вызова функций, ответ не JSON-объект
+    prompt_version: str | None
     event_id: int | None
     trace_id: str
+    tools: list[dict[str, Any]] | None = None
+    need_cap: str | None = None  # возможность, без которой модель цепочки пропускается
 
 
 def _text_of(message: dict[str, Any]) -> tuple[str, int]:
@@ -154,6 +157,20 @@ def _text_of(message: dict[str, Any]) -> tuple[str, int]:
         text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
         return text, sum(1 for p in parts if p.get("type") == "image_url")
     return "", 0
+
+
+def _hash_images(message: dict[str, Any]) -> dict[str, Any]:
+    # в ключ кэша идёт sha256 картинки, а не она сама
+    content = message.get("content")
+    if not isinstance(content, list):
+        return message
+    parts = [
+        {"type": "image_url", "sha256": hashlib.sha256(p["image_url"]["url"].encode()).hexdigest()}
+        if p.get("type") == "image_url"
+        else p
+        for p in content
+    ]
+    return {**message, "content": parts}
 
 
 def _with_instruction(messages: list[dict[str, Any]], instruction: str) -> list[dict[str, Any]]:
@@ -222,10 +239,38 @@ class Gateway:
         *,
         lane: Lane = "interactive",
     ) -> ToolStepResult:
-        raise LLMUnavailable("шаг вызова функций ещё не реализован")
+        cfg = self.config.task(task)
+        req = self._request(task, cfg, lane, list(messages), None, None, None)
+        req.tools = [
+            {
+                "type": "function",
+                "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+            }
+            for t in tools
+        ]
+        req.need_cap = "tools"
+        return await self._run(req)
 
     async def vision[M: BaseModel](self, task: str, prompt: str, image_png: bytes, schema: type[M]) -> M:
-        raise LLMUnavailable("чтение картинок ещё не реализовано")
+        cfg = self.config.task(task)
+        text, version = self._prompts.render(prompt, {})
+        url = "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")
+        content = [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": url}}]
+        req = self._request(
+            task, cfg, "background", [{"role": "user", "content": content}], schema, version, None
+        )
+        req.need_cap = "vision"
+        return await self._run(req)
+
+    def strategy(self, task: str) -> Literal["tools", "prefetch"]:
+        cfg = self.config.task(task)
+        if (
+            cfg.strategy == "tools"
+            and cfg.model
+            and "tools" in self.config.caps(cfg.model, self._actual_caps())
+        ):
+            return "tools"
+        return "prefetch"
 
     # ---------- подготовка ----------
 
@@ -235,8 +280,8 @@ class Gateway:
         cfg: TaskCfg,
         lane: Lane,
         messages: list[dict[str, Any]],
-        schema: type[BaseModel],
-        version: str,
+        schema: type[BaseModel] | None,
+        version: str | None,
         event_id: int | None,
     ) -> _Request:
         scope = _scope.get()
@@ -250,6 +295,12 @@ class Gateway:
             event_id=event_id if event_id is not None else (scope.event_id if scope else None),
             trace_id=scope.trace_id if scope else uuid.uuid4().hex[:16],
         )
+
+    def _actual_caps(self) -> Mapping[str, set[str]]:
+        # файл с фактическими возможностями пишет probe; читаем один раз, при первой надобности
+        if self._caps is None:
+            self._caps = load_caps(REPO_ROOT / ".models_caps.json")
+        return self._caps
 
     def _secrets(self) -> tuple[str, str]:
         settings = self._settings or get_settings()
@@ -273,8 +324,6 @@ class Gateway:
                     sleep=self._sleep,
                     clock=self._clock,
                 )
-            if self._caps is None:
-                self._caps = load_caps(REPO_ROOT / ".models_caps.json")
             if self._store is None:
                 self._store = await self._open_store()
             kwargs = {"now": self._now} if self._now else {}
@@ -294,24 +343,31 @@ class Gateway:
 
     # ---------- цепочка моделей ----------
 
-    def _chain(self, cfg: TaskCfg) -> list[str]:
-        return [m for m in [cfg.model, *cfg.fallback] if m]
+    def _chain(self, cfg: TaskCfg, need_cap: str | None) -> list[str]:
+        models = [m for m in [cfg.model, *cfg.fallback] if m]
+        if need_cap is None:
+            return models
+        return [m for m in models if need_cap in self.config.caps(m, self._actual_caps())]
 
     def _best_mode(self, model: str) -> JsonMode:
         if model not in self._json_mode:
-            caps = self.config.caps(model, self._caps or {})
+            caps = self.config.caps(model, self._actual_caps())
             self._json_mode[model] = (
                 "schema" if "json_schema" in caps else "object" if "json_object" in caps else "prompt"
             )
         return self._json_mode[model]
 
-    async def _run(self, req: _Request) -> BaseModel:
+    async def _run(self, req: _Request) -> BaseModel | ToolStepResult:
         api_key, folder = self._secrets()
         if not api_key or not folder:
             raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
         budget = await self._ready()
         await budget.sync()
-        chain = self._chain(req.cfg)
+        chain = self._chain(req.cfg, req.need_cap)
+        if not chain:
+            raise AllModelsFailed(
+                f"задача {req.task}: среди её моделей нет ни одной с возможностью {req.need_cap}"
+            )
         deadline = self._clock() + LANE_DEADLINE_S[req.lane]
         errors: list[str] = []
         for index, model in enumerate(chain):
@@ -323,7 +379,7 @@ class Gateway:
             if not self.breaker.allows(model) and index < len(chain) - 1:
                 errors.append(f"{model}: предохранитель разомкнут")
                 continue
-            fallback_from = chain[0] if index else None
+            fallback_from = req.cfg.model if model != req.cfg.model else None
             try:
                 return await self._attempt(req, model, fallback_from, deadline)
             except _Failed as failed:
@@ -331,9 +387,10 @@ class Gateway:
         raise AllModelsFailed(f"задача {req.task}: ни одна модель не ответила. " + "; ".join(errors))
 
     def _cache_key(self, req: _Request, mcfg: ModelCfg) -> str:
+        assert req.schema is not None
         payload = {
             "uri": mcfg.uri,
-            "messages": req.messages,
+            "messages": [_hash_images(m) for m in req.messages],
             "schema": req.schema.model_json_schema(),
             "t": req.cfg.temperature,
             "max_tokens": req.cfg.max_tokens,
@@ -347,14 +404,17 @@ class Gateway:
         for message in req.messages:
             text, images = _text_of(message)
             tokens_in += estimate_tokens(text) + images * IMAGE_TOKENS
-        tokens_in += estimate_tokens(json.dumps(req.schema.model_json_schema(), ensure_ascii=False))
+        if req.schema is not None:
+            tokens_in += estimate_tokens(json.dumps(req.schema.model_json_schema(), ensure_ascii=False))
+        if req.tools:
+            tokens_in += estimate_tokens(json.dumps(req.tools, ensure_ascii=False))
         # у части моделей рассуждения не входят в max_tokens
         tokens_out = req.cfg.max_tokens * (2 if req.cfg.reasoning else 1)
         return tokens_in * mcfg.price.in_ / 1000 + tokens_out * mcfg.price.out / 1000
 
     async def _attempt(
         self, req: _Request, model: str, fallback_from: str | None, deadline: float
-    ) -> BaseModel:
+    ) -> BaseModel | ToolStepResult:
         assert self._budget is not None and self._store is not None
         mcfg = self.config.models[model]
         provider = self._providers[mcfg.provider]
@@ -368,9 +428,10 @@ class Gateway:
             trace_id=req.trace_id,
             event_id=req.event_id,
         )
-        key = self._cache_key(req, mcfg)
-        hit = await self._store.cache_get(key)
+        key = self._cache_key(req, mcfg) if req.schema is not None else None
+        hit = await self._store.cache_get(key) if key else None
         if hit is not None:
+            assert req.schema is not None
             try:
                 cached = req.schema.model_validate(hit)
             except ValidationError:
@@ -392,7 +453,8 @@ class Gateway:
                 raise
         self.breaker.success(model)
         self._charge(row, mcfg, usage)
-        await self._store.cache_put(key, req.task, model, result.model_dump(mode="json"))
+        if key:
+            await self._store.cache_put(key, req.task, model, result.model_dump(mode="json"))
         await self._finish(row, started)
         return result
 
@@ -421,22 +483,25 @@ class Gateway:
     def _body(
         self, req: _Request, model: str, mcfg: ModelCfg, messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        mode = self._best_mode(model)
-        schema = req.schema.model_json_schema()
         body: dict[str, Any] = {
             "model": self._providers[mcfg.provider].uri(mcfg.uri),
             "temperature": req.cfg.temperature,
             "max_tokens": req.cfg.max_tokens,
         }
-        if mode == "schema":
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": req.schema.__name__, "schema": strict_schema(schema)},
-            }
+        if req.schema is None:
+            body["tools"], body["tool_choice"] = req.tools, "auto"
         else:
-            if mode == "object":
-                body["response_format"] = {"type": "json_object"}
-            messages = _with_instruction(messages, schema_instruction(schema))
+            mode = self._best_mode(model)
+            schema = req.schema.model_json_schema()
+            if mode == "schema":
+                body["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": req.schema.__name__, "schema": strict_schema(schema)},
+                }
+            else:
+                if mode == "object":
+                    body["response_format"] = {"type": "json_object"}
+                messages = _with_instruction(messages, schema_instruction(schema))
         body["messages"] = messages
         if (
             not req.cfg.reasoning
@@ -465,8 +530,7 @@ class Gateway:
                     self._no_reasoning_param.add(model)
                     log.warning("шлюз: модель %s не принимает reasoning_effort, параметр отключён", model)
                     continue
-                mode = self._best_mode(model)
-                lower = DOWNGRADE[mode]
+                lower = DOWNGRADE[self._best_mode(model)] if req.schema is not None else None
                 if lower and any(
                     w in reason for w in ("response_format", "json_schema", "json_object", "schema", "format")
                 ):
@@ -483,7 +547,7 @@ class Gateway:
         provider: Provider,
         usage: _Usage,
         deadline: float,
-    ) -> BaseModel:
+    ) -> BaseModel | ToolStepResult:
         semaphore = provider.lane(req.lane)
         wait = max(deadline - self._clock() - MIN_WINDOW_S, 0.001)
         try:
@@ -503,7 +567,9 @@ class Gateway:
         provider: Provider,
         usage: _Usage,
         deadline: float,
-    ) -> BaseModel:
+    ) -> BaseModel | ToolStepResult:
+        if req.schema is None:
+            return await self._tools_query(req, model, mcfg, provider, usage, deadline)
         schema_json = req.schema.model_json_schema()
         messages = list(req.messages)
         for attempt in range(VALIDATION_ATTEMPTS):
@@ -532,6 +598,25 @@ class Gateway:
                     },
                 ]
         raise AssertionError("недостижимо")
+
+    async def _tools_query(
+        self,
+        req: _Request,
+        model: str,
+        mcfg: ModelCfg,
+        provider: Provider,
+        usage: _Usage,
+        deadline: float,
+    ) -> ToolStepResult:
+        try:
+            answer = await self._chat(req, model, mcfg, provider, req.messages, deadline)
+        except ProviderError as exc:
+            raise _Failed(str(exc)) from exc
+        usage.tokens_in += answer.tokens_in
+        usage.tokens_out += answer.tokens_out
+        if not answer.text and not answer.tool_calls:
+            raise _Failed("пустой ответ модели")
+        return ToolStepResult(text=answer.text or None, tool_calls=answer.tool_calls)
 
 
 gw = Gateway(load_config(REPO_ROOT / "config" / "models.yaml"))
