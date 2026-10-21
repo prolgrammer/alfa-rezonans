@@ -4,7 +4,7 @@ import time
 
 import httpx
 import pytest
-from llm_support import FALLBACK, GOOD, PRIMARY, Answer, bodies, make_settings, route_by_model
+from llm_support import FALLBACK, GOOD, LAST, PRIMARY, Answer, bodies, make_settings, route_by_model
 from pydantic import ValidationError
 
 import app.llm.gateway as gateway_module
@@ -58,18 +58,19 @@ class SlowCacheStore(MemoryStore):
         self._fake_clock = clock
 
     async def cache_get(self, key):
-        self._fake_clock.now += 17.5
+        self._fake_clock.now += 11.5  # × три модели цепочки event_card
         return await super().cache_get(key)
 
 
 async def test_deadline_exhaustion_does_not_trip_breaker(api, make_gw, clock):
-    route = route_by_model(api, {PRIMARY: GOOD, FALLBACK: GOOD})
+    route = route_by_model(api, {PRIMARY: GOOD, FALLBACK: GOOD, LAST: GOOD})
     gw = make_gw(store=SlowCacheStore(clock))
     for i in range(6):
         clock.now = 0
         await call(gw, f"v{i}", lane="interactive")
     assert len(bodies(route, PRIMARY)) == 0
     assert gw.breaker.state(PRIMARY) == "closed"
+    assert gw.breaker.state(FALLBACK) == "closed"
 
 
 async def test_non_format_400_does_not_trip_breaker(api, make_gw):

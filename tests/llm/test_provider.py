@@ -273,3 +273,11 @@ async def test_list_models_unavailable(api, provider, response):
 async def test_list_models_network_error(api, provider):
     api.get("/models").mock(side_effect=httpx.ConnectError("нет сети"))
     assert await provider.list_models() is None
+
+
+async def test_400_unknown_model_is_model_fault(api, provider):
+    body = {"error": {"message": "Failed to get model", "type": "server_error"}}
+    api.post("/chat/completions").respond(400, json=body)
+    with pytest.raises(BadRequest) as caught:
+        await provider.chat(BODY, deadline=FAR)
+    assert caught.value.model_fault is True

@@ -18,7 +18,7 @@ from app.llm.config import ModelsConfig
 from app.llm.errors import BudgetExceeded
 from app.llm.gateway import IMAGE_TOKENS, Gateway, RawAnswer, llm_scope
 from app.llm.jsonmode import parse_json, strict_schema
-from app.llm.provider import BadRequest, estimate_tokens
+from app.llm.provider import UNKNOWN_MODEL_RE, BadRequest, estimate_tokens
 
 CAPS: tuple[str, ...] = ("json_schema", "json_object", "tools", "vision")
 CALLS_PER_MODEL = 8  # simple ×3, reasoning_off, json_schema, json_object, tools, vision
@@ -55,9 +55,6 @@ TOOLS = [
 _PARIS = ("париж", "paris")
 _RED = ("красн", "red")
 _GREEN = ("зел", "green")
-_UNKNOWN_MODEL_RE = re.compile(
-    r"model[^\n]{0,80}?(not found|not exist|unknown)|модель[^\n]{0,80}?не найдена", re.IGNORECASE
-)
 
 
 class ProbeAuthError(Exception):
@@ -180,7 +177,7 @@ def _unknown_model(answer: RawAnswer) -> bool:
     # 403 на первом вызове — модель не подключена каталогу: для неё это то же, что «не найдена»
     error = answer.error
     return error is not None and (
-        error.status in (403, 404) or (error.status == 400 and bool(_UNKNOWN_MODEL_RE.search(str(error))))
+        error.status in (403, 404) or (error.status == 400 and bool(UNKNOWN_MODEL_RE.search(str(error))))
     )
 
 

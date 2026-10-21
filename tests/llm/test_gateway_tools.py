@@ -115,8 +115,8 @@ async def test_vision_sends_image_and_caches(api, make_gw, store):
 
 
 async def test_vision_without_vision_model_fails(api, make_gw):
-    route = route_by_model(api, {VISION_MODEL: GOOD})
-    gw = make_gw(caps={VISION_MODEL: {"json_object"}})
+    route = route_by_model(api, {VISION_MODEL: GOOD, PRIMARY: GOOD})
+    gw = make_gw(caps={VISION_MODEL: {"json_object"}, PRIMARY: {"json_schema"}})
     with pytest.raises(AllModelsFailed):
         await gw.vision("chart_read", "plain", b"x", Answer)
     assert not route.called
