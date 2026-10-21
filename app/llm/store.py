@@ -1,9 +1,12 @@
 import asyncio
 import logging
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from psycopg import errors as pg_errors
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
@@ -95,29 +98,39 @@ class PgStore:
 
     async def record(self, row: CallRow) -> None:
         try:
-            async with asyncio.timeout(DB_TIMEOUT_S), self.pool.connection(timeout=DB_TIMEOUT_S) as conn:
-                await conn.execute(
-                    "INSERT INTO llm_calls (task, model, prompt_version, tokens_in, tokens_out, cost_rub, "
-                    "ms, cached, fallback_from, error, lane, trace_id, event_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        row.task,
-                        row.model,
-                        row.prompt_version,
-                        row.tokens_in,
-                        row.tokens_out,
-                        row.cost_rub,
-                        row.ms,
-                        row.cached,
-                        row.fallback_from,
-                        row.error[:ERROR_LIMIT] if row.error else None,
-                        row.lane,
-                        row.trace_id,
-                        row.event_id,
-                    ),
-                )
+            await self._insert_call(row, row.event_id)
+        except pg_errors.ForeignKeyViolation:
+            # события нет в БД: учёт вызова важнее привязки к событию
+            log.warning("шлюз: события %s нет в БД, вызов записан без привязки", row.event_id)
+            try:
+                await self._insert_call(row, None)
+            except Exception as exc:
+                self._fail("record", exc)
         except Exception as exc:
             self._fail("record", exc)
+
+    async def _insert_call(self, row: CallRow, event_id: int | None) -> None:
+        async with asyncio.timeout(DB_TIMEOUT_S), self.pool.connection(timeout=DB_TIMEOUT_S) as conn:
+            await conn.execute(
+                "INSERT INTO llm_calls (task, model, prompt_version, tokens_in, tokens_out, cost_rub, "
+                "ms, cached, fallback_from, error, lane, trace_id, event_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    row.task,
+                    row.model,
+                    row.prompt_version,
+                    row.tokens_in,
+                    row.tokens_out,
+                    row.cost_rub,
+                    row.ms,
+                    row.cached,
+                    row.fallback_from,
+                    row.error[:ERROR_LIMIT] if row.error else None,
+                    row.lane,
+                    row.trace_id,
+                    event_id,
+                ),
+            )
 
     async def spent_since(self, start: datetime) -> float | None:
         try:
@@ -131,3 +144,52 @@ class PgStore:
             self._fail("spent_since", exc)
             return None
         return float(row["spent"] if isinstance(row, dict) else row[0])
+
+
+class LazyStore:
+    """Хранилище, которое открывает БД в фоне: вызовы модели не ждут её и не зависят от её сбоев.
+
+    Пока пул не открылся, работает память; повторная попытка открыть БД не чаще раза в `retry_s`.
+    Открытие не отменяем: отмена посреди `open` оставила бы пул с живыми воркерами.
+    """
+
+    def __init__(
+        self,
+        open_pool: Callable[[], Awaitable[AsyncConnectionPool]],
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        retry_s: float = 60.0,
+    ) -> None:
+        self._open_pool = open_pool
+        self._clock = clock
+        self._retry_s = retry_s
+        self._memory = MemoryStore()
+        self._pg: PgStore | None = None
+        self._opening: asyncio.Task[None] | None = None
+        self._retry_at = float("-inf")
+
+    async def _open(self) -> None:
+        try:
+            self._pg = PgStore(await self._open_pool())
+        except Exception as exc:
+            self._retry_at = self._clock() + self._retry_s
+            log.warning("шлюз: БД недоступна (%s), кэш и учёт вызовов пока в памяти", type(exc).__name__)
+
+    def _current(self) -> Store:
+        if self._pg is not None:
+            return self._pg
+        if (self._opening is None or self._opening.done()) and self._clock() >= self._retry_at:
+            self._opening = asyncio.create_task(self._open())
+        return self._memory
+
+    async def cache_get(self, key: str) -> Any | None:
+        return await self._current().cache_get(key)
+
+    async def cache_put(self, key: str, task: str, model: str, response: Any) -> None:
+        await self._current().cache_put(key, task, model, response)
+
+    async def record(self, row: CallRow) -> None:
+        await self._current().record(row)
+
+    async def spent_since(self, start: datetime) -> float | None:
+        return await self._current().spent_since(start)

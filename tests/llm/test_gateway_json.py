@@ -360,7 +360,7 @@ async def test_interactive_lane_passes_when_background_busy(api, make_gw, store)
     route_by_model(api, {PRIMARY: GOOD})
     gw = make_gw()
     await call(gw, "прогрев")
-    background = gw._providers["yandex"].lane("background")
+    background = gw._providers["yandex"]._background
     for _ in range(3):
         await background.acquire()
     await call(gw, "разбор по клику", lane="interactive")

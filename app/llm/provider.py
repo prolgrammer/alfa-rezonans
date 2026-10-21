@@ -1,9 +1,10 @@
 import asyncio
+import contextlib
 import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,13 +31,19 @@ def estimate_tokens(text: str) -> int:
 
 
 class ProviderError(Exception):
-    def __init__(self, message: str, status: int | None = None) -> None:
+    def __init__(self, message: str, status: int | None = None, *, model_fault: bool = True) -> None:
         super().__init__(message)
         self.status = status
+        # False: сбой не по вине модели (дедлайн, непринятый запрос): предохранитель его не считает
+        self.model_fault = model_fault
 
 
 class BadRequest(ProviderError):
     """Ответ 400: текст уже замаскирован, шлюз по нему решает, какой параметр понизить."""
+
+
+class SlotTimeout(ProviderError):
+    """Не дождались свободного слота провайдера до конца дедлайна."""
 
 
 class Transient(ProviderError):
@@ -49,7 +56,6 @@ class ChatResult:
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     tokens_in: int = 0
     tokens_out: int = 0
-    estimated: bool = False  # провайдер не вернул usage, токены оценены по длине
     finish_reason: str | None = None
 
 
@@ -89,8 +95,37 @@ class Provider:
     def uri(self, template: str) -> str:
         return template.replace("{folder}", self._folder)
 
-    def lane(self, lane: Lane) -> asyncio.Semaphore:
-        return self._interactive if lane == "interactive" else self._background
+    @contextlib.asynccontextmanager
+    async def slot(self, lane: Lane, wait_s: float) -> AsyncIterator[None]:
+        """Слот провайдера на время запроса; SlotTimeout, если не дождались.
+
+        Интерактивный вызов берёт свой зарезервированный слот, а если он занят, свободный фоновый:
+        резерв защищает интерактив от фона, а не ограничивает его.
+        """
+        semaphore = await self._acquire(lane, wait_s)
+        try:
+            yield
+        finally:
+            semaphore.release()
+
+    async def _acquire(self, lane: Lane, wait_s: float) -> asyncio.Semaphore:
+        try:
+            return await self._take(lane, wait_s)
+        except TimeoutError:
+            raise SlotTimeout(
+                "нет свободного слота у провайдера до конца дедлайна", model_fault=False
+            ) from None
+
+    async def _take(self, lane: Lane, wait_s: float) -> asyncio.Semaphore:
+        if lane == "interactive" and self._interactive is not self._background:
+            for semaphore in (self._interactive, self._background):
+                if not semaphore.locked():
+                    await semaphore.acquire()  # свободный семафор отдаёт слот без ожидания
+                    return semaphore
+            await asyncio.wait_for(self._interactive.acquire(), wait_s)
+            return self._interactive
+        await asyncio.wait_for(self._background.acquire(), wait_s)
+        return self._background
 
     def mask(self, text: str) -> str:
         for secret in (self._api_key, self._folder):
@@ -99,9 +134,6 @@ class Provider:
         text = _MODEL_URI_RE.sub(r"\1://***/", text)
         return _AUTH_RE.sub(r"\1 ***", text)
 
-    async def aclose(self) -> None:
-        await self._client.aclose()
-
     async def chat(self, body: dict[str, Any], *, deadline: float) -> ChatResult:
         last = ""
         status: int | None = None
@@ -109,16 +141,24 @@ class Provider:
             remaining = deadline - self._clock()
             if remaining < MIN_ATTEMPT_WINDOW_S:
                 raise Transient(
-                    f"до дедлайна вызова осталось меньше {MIN_ATTEMPT_WINDOW_S:.0f} с. {last}", status
+                    f"до дедлайна вызова осталось меньше {MIN_ATTEMPT_WINDOW_S:.0f} с. {last}",
+                    status,
+                    model_fault=False,
                 )
             pause = BACKOFF_S[attempt]
+            limit = min(self.cfg.timeout_s, remaining)
             try:
-                response = await self._client.post(
-                    "/chat/completions",
-                    json=body,
-                    timeout=httpx.Timeout(min(self.cfg.timeout_s, remaining), connect=min(5.0, remaining)),
-                )
-            except httpx.TransportError as exc:
+                # httpx ограничивает каждую операцию сокета отдельно, а не запрос целиком:
+                # без внешнего таймаута медленный поток байтов растянул бы вызов за дедлайн
+                async with asyncio.timeout(limit):
+                    response = await self._client.post(
+                        "/chat/completions",
+                        json=body,
+                        timeout=httpx.Timeout(limit, connect=min(5.0, limit)),
+                    )
+            except TimeoutError:
+                last, status = f"таймаут запроса {limit:.0f} с", None
+            except httpx.RequestError as exc:
                 last, status = self.mask(f"{type(exc).__name__}: {exc}")[:ERROR_TEXT_LIMIT], None
             else:
                 status = response.status_code
@@ -130,7 +170,7 @@ class Provider:
                 else:
                     text = self.mask(response.text)[:ERROR_TEXT_LIMIT]
                     if status == 400:
-                        raise BadRequest(f"HTTP 400: {text}", 400)
+                        raise BadRequest(f"HTTP 400: {text}", 400, model_fault=False)
                     if status != 429 and status < 500:
                         raise ProviderError(f"HTTP {status}: {text}", status)
                     last = f"HTTP {status}: {text}"
@@ -167,13 +207,9 @@ class Provider:
             )
         usage = data.get("usage")
         if usage and usage.get("prompt_tokens") is not None:
-            tokens_in, tokens_out, estimated = (
-                usage["prompt_tokens"],
-                usage.get("completion_tokens") or 0,
-                False,
-            )
+            tokens_in, tokens_out = usage["prompt_tokens"], usage.get("completion_tokens") or 0
         else:
             tokens_in = sum(estimate_tokens(_message_text(m)) for m in body.get("messages", []))
             produced = text + "".join(json.dumps(c.args, ensure_ascii=False) for c in calls)
-            tokens_out, estimated = estimate_tokens(produced), True
-        return ChatResult(text, calls, tokens_in, tokens_out, estimated, choice.get("finish_reason"))
+            tokens_out = estimate_tokens(produced)
+        return ChatResult(text, calls, tokens_in, tokens_out, choice.get("finish_reason"))

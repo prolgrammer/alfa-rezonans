@@ -28,8 +28,8 @@ from app.llm.jsonmode import (
     strict_schema,
 )
 from app.llm.prompts import Prompts
-from app.llm.provider import BadRequest, ChatResult, Provider, ProviderError, estimate_tokens
-from app.llm.store import CallRow, MemoryStore, PgStore, Store
+from app.llm.provider import BadRequest, ChatResult, Provider, ProviderError, SlotTimeout, estimate_tokens
+from app.llm.store import CallRow, LazyStore, Store
 from app.llm.types import Lane, ToolCallRequest, ToolSpec, ToolStepResult
 from app.settings import REPO_ROOT, Settings, get_settings
 
@@ -59,7 +59,6 @@ VALIDATION_ATTEMPTS = 2
 ERROR_LIMIT = 500
 # Сколько токенов занимает картинка в оценке резерва: точное число зависит от модели и размера.
 IMAGE_TOKENS = 2000
-STORE_INIT_TIMEOUT_S = 5.0
 
 
 class Breaker:
@@ -126,6 +125,11 @@ def llm_scope(*, trace_id: str | None = None, event_id: int | None = None) -> It
 
 class _Failed(Exception):
     """Модель не дала валидного ответа; текст уже замаскирован."""
+
+    def __init__(self, message: str, *, model_fault: bool = True) -> None:
+        super().__init__(message)
+        # сбой не по вине модели (очередь, дедлайн, чужой запрос) предохранитель не считает
+        self.model_fault = model_fault
 
 
 @dataclass
@@ -214,8 +218,6 @@ class Gateway:
         self._budget: Budget | None = None
         self._init_lock = asyncio.Lock()
 
-    # ---------- публичный API ----------
-
     async def json[M: BaseModel](
         self,
         task: str,
@@ -272,8 +274,6 @@ class Gateway:
             return "tools"
         return "prefetch"
 
-    # ---------- подготовка ----------
-
     def _request(
         self,
         task: str,
@@ -325,23 +325,12 @@ class Gateway:
                     clock=self._clock,
                 )
             if self._store is None:
-                self._store = await self._open_store()
+                self._store = LazyStore(get_pool, clock=self._clock)
             kwargs = {"now": self._now} if self._now else {}
             self._budget = Budget(
                 settings.llm_daily_budget_rub, store=self._store, clock=self._clock, **kwargs
             )
             return self._budget
-
-    @staticmethod
-    async def _open_store() -> Store:
-        try:
-            async with asyncio.timeout(STORE_INIT_TIMEOUT_S):
-                return PgStore(await get_pool())
-        except Exception as exc:
-            log.warning("шлюз: БД недоступна (%s), кэш и учёт вызовов только в памяти", type(exc).__name__)
-            return MemoryStore()
-
-    # ---------- цепочка моделей ----------
 
     def _chain(self, cfg: TaskCfg, need_cap: str | None) -> list[str]:
         models = [m for m in [cfg.model, *cfg.fallback] if m]
@@ -358,7 +347,12 @@ class Gateway:
         return self._json_mode[model]
 
     async def _run(self, req: _Request) -> BaseModel | ToolStepResult:
-        api_key, folder = self._secrets()
+        # дедлайн отсчитываем с самого начала: подготовка к вызову тоже входит в бюджет времени полосы
+        deadline = self._clock() + LANE_DEADLINE_S[req.lane]
+        try:
+            api_key, folder = self._secrets()
+        except ValidationError:
+            raise LLMNotConfigured("настройки сервиса не загружены: вызов модели невозможен") from None
         if not api_key or not folder:
             raise LLMNotConfigured("не заданы LLM_API_KEY и LLM_FOLDER_ID: вызов модели невозможен")
         budget = await self._ready()
@@ -368,23 +362,60 @@ class Gateway:
             raise AllModelsFailed(
                 f"задача {req.task}: среди её моделей нет ни одной с возможностью {req.need_cap}"
             )
-        deadline = self._clock() + LANE_DEADLINE_S[req.lane]
-        errors: list[str] = []
-        for index, model in enumerate(chain):
+        for model in chain:
             if model not in ALLOWED_MODELS:
                 raise ValueError(f"модель {model!r} не входит в белый список кейса")
-            if deadline - self._clock() < MIN_WINDOW_S:
+        cached = await self._from_cache(req, chain)
+        if cached is not None:
+            return cached
+        errors: list[str] = []
+        for index, model in enumerate(chain):
+            now = self._clock()
+            if deadline - now < MIN_WINDOW_S:
                 errors.append("истёк дедлайн вызова")
                 break
-            if not self.breaker.allows(model) and index < len(chain) - 1:
+            last = index == len(chain) - 1
+            if not self.breaker.allows(model) and not last:
                 errors.append(f"{model}: предохранитель разомкнут")
                 continue
-            fallback_from = req.cfg.model if model != req.cfg.model else None
+            # в интерактивной полосе зависшая основная модель не должна съесть окно резерва целиком
+            until = deadline if last or req.lane != "interactive" else now + (deadline - now) / 2
             try:
-                return await self._attempt(req, model, fallback_from, deadline)
+                return await self._attempt(req, model, until)
             except _Failed as failed:
                 errors.append(f"{model}: {failed}")
         raise AllModelsFailed(f"задача {req.task}: ни одна модель не ответила. " + "; ".join(errors))
+
+    def _new_row(self, req: _Request, model: str) -> CallRow:
+        return CallRow(
+            task=req.task,
+            model=model,
+            lane=req.lane,
+            prompt_version=req.prompt_version,
+            fallback_from=req.cfg.model if model != req.cfg.model else None,
+            trace_id=req.trace_id,
+            event_id=req.event_id,
+        )
+
+    async def _from_cache(self, req: _Request, chain: list[str]) -> BaseModel | None:
+        """Повтор отдаётся из кэша любой модели цепочки, прежде чем платить основной модели заново."""
+        assert self._store is not None
+        if req.schema is None:
+            return None
+        for model in chain:
+            hit = await self._store.cache_get(self._cache_key(req, self.config.models[model]))
+            if hit is None:
+                continue
+            try:
+                cached = req.schema.model_validate(hit)
+            except ValidationError:
+                log.info("шлюз: запись кэша не проходит текущую схему, игнорируем (%s)", req.task)
+                continue
+            row = self._new_row(req, model)
+            row.cached = True
+            await self._finish(row, self._clock())
+            return cached
+        return None
 
     def _cache_key(self, req: _Request, mcfg: ModelCfg) -> str:
         assert req.schema is not None
@@ -412,51 +443,57 @@ class Gateway:
         tokens_out = req.cfg.max_tokens * (2 if req.cfg.reasoning else 1)
         return tokens_in * mcfg.price.in_ / 1000 + tokens_out * mcfg.price.out / 1000
 
-    async def _attempt(
-        self, req: _Request, model: str, fallback_from: str | None, deadline: float
-    ) -> BaseModel | ToolStepResult:
+    async def _attempt(self, req: _Request, model: str, deadline: float) -> BaseModel | ToolStepResult:
         assert self._budget is not None and self._store is not None
         mcfg = self.config.models[model]
         provider = self._providers[mcfg.provider]
         started = self._clock()
-        row = CallRow(
-            task=req.task,
-            model=model,
-            lane=req.lane,
-            prompt_version=req.prompt_version,
-            fallback_from=fallback_from,
-            trace_id=req.trace_id,
-            event_id=req.event_id,
-        )
-        key = self._cache_key(req, mcfg) if req.schema is not None else None
-        hit = await self._store.cache_get(key) if key else None
-        if hit is not None:
-            assert req.schema is not None
-            try:
-                cached = req.schema.model_validate(hit)
-            except ValidationError:
-                log.info("шлюз: запись кэша не проходит текущую схему, идём к модели (%s)", req.task)
-            else:
-                row.cached = True
-                await self._finish(row, started)
-                return cached
-
+        row = self._new_row(req, model)
         usage = _Usage()
-        with self._budget.hold(req.task, req.cfg.essential, self._reserve_rub(req, mcfg)):
+        wait = max(deadline - started - MIN_WINDOW_S, 0.001)
+        try:
             try:
-                result = await self._query(req, model, mcfg, provider, usage, deadline)
-            except _Failed as failed:
-                row.error = str(failed)[:ERROR_LIMIT]
+                # слот берём до резерва бюджета: очередь не должна раздувать резервы
+                async with provider.slot(req.lane, wait):
+                    with self._budget.hold(req.task, req.cfg.essential, self._reserve_rub(req, mcfg)):
+                        result = await self._guarded_query(req, model, mcfg, provider, usage, deadline)
+            except SlotTimeout as exc:
+                raise _Failed(str(exc), model_fault=False) from None
+        except _Failed as failed:
+            row.error = str(failed)[:ERROR_LIMIT]
+            if failed.model_fault:
                 self.breaker.failure(model)
-                self._charge(row, mcfg, usage)
-                await self._finish(row, started)
-                raise
+            self._charge(row, mcfg, usage)
+            await self._finish(row, started)
+            raise
         self.breaker.success(model)
         self._charge(row, mcfg, usage)
-        if key:
-            await self._store.cache_put(key, req.task, model, result.model_dump(mode="json"))
+        if req.schema is not None:
+            await self._store.cache_put(
+                self._cache_key(req, mcfg), req.task, model, result.model_dump(mode="json")
+            )
         await self._finish(row, started)
         return result
+
+    async def _guarded_query(
+        self,
+        req: _Request,
+        model: str,
+        mcfg: ModelCfg,
+        provider: Provider,
+        usage: _Usage,
+        deadline: float,
+    ) -> BaseModel | ToolStepResult:
+        try:
+            return await self._query_slot(req, model, mcfg, provider, usage, deadline)
+        except _Failed:
+            raise
+        except Exception as exc:
+            # неожиданный сбой клиента (цикл событий закрыт и т.п.) не должен ломать контракт LLMUnavailable
+            log.warning("шлюз: неожиданная ошибка при вызове модели %s (%s)", model, type(exc).__name__)
+            raise _Failed(
+                provider.mask(f"{type(exc).__name__}: {exc}")[:ERROR_LIMIT], model_fault=False
+            ) from None
 
     def _charge(self, row: CallRow, mcfg: ModelCfg, usage: _Usage) -> None:
         row.tokens_in, row.tokens_out = usage.tokens_in, usage.tokens_out
@@ -477,8 +514,6 @@ class Gateway:
                 ScopeCall(row.task, row.model, row.ms, row.cost_rub, row.cached, row.fallback_from)
             )
         await self._store.record(row)
-
-    # ---------- один запрос к модели ----------
 
     def _body(
         self, req: _Request, model: str, mcfg: ModelCfg, messages: list[dict[str, Any]]
@@ -523,7 +558,7 @@ class Gateway:
         while True:
             body = self._body(req, model, mcfg, messages)
             try:
-                return await provider.chat(body, deadline=deadline)
+                answer = await provider.chat(body, deadline=deadline)
             except BadRequest as exc:
                 reason = str(exc).lower()
                 if "reasoning_effort" in body and "reasoning" in reason:
@@ -532,32 +567,15 @@ class Gateway:
                     continue
                 lower = DOWNGRADE[self._best_mode(model)] if req.schema is not None else None
                 if lower and any(
-                    w in reason for w in ("response_format", "json_schema", "json_object", "schema", "format")
+                    w in reason for w in ("response_format", "json_schema", "json schema", "json_object")
                 ):
                     self._json_mode[model] = lower
                     log.warning("шлюз: модель %s, режим JSON понижен до %s", model, lower)
                     continue
                 raise
-
-    async def _query(
-        self,
-        req: _Request,
-        model: str,
-        mcfg: ModelCfg,
-        provider: Provider,
-        usage: _Usage,
-        deadline: float,
-    ) -> BaseModel | ToolStepResult:
-        semaphore = provider.lane(req.lane)
-        wait = max(deadline - self._clock() - MIN_WINDOW_S, 0.001)
-        try:
-            await asyncio.wait_for(semaphore.acquire(), wait)
-        except TimeoutError:
-            raise _Failed("нет свободного слота у провайдера до конца дедлайна") from None
-        try:
-            return await self._query_slot(req, model, mcfg, provider, usage, deadline)
-        finally:
-            semaphore.release()
+            if answer.finish_reason == "length":
+                log.warning("шлюз: ответ модели %s оборван по max_tokens (задача %s)", model, req.task)
+            return answer
 
     async def _query_slot(
         self,
@@ -576,7 +594,7 @@ class Gateway:
             try:
                 answer = await self._chat(req, model, mcfg, provider, messages, deadline)
             except ProviderError as exc:
-                raise _Failed(str(exc)) from exc
+                raise _Failed(str(exc), model_fault=exc.model_fault) from exc
             usage.tokens_in += answer.tokens_in
             usage.tokens_out += answer.tokens_out
             if "{" not in answer.text:
@@ -611,7 +629,7 @@ class Gateway:
         try:
             answer = await self._chat(req, model, mcfg, provider, req.messages, deadline)
         except ProviderError as exc:
-            raise _Failed(str(exc)) from exc
+            raise _Failed(str(exc), model_fault=exc.model_fault) from exc
         usage.tokens_in += answer.tokens_in
         usage.tokens_out += answer.tokens_out
         if not answer.text and not answer.tool_calls:

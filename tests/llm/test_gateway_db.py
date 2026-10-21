@@ -15,7 +15,7 @@ async def test_calls_written_for_success_failure_and_cache(api, make_gw, pg_pool
 
     await call(event_id=event_id)  # неудача основной и успех резервной
     with llm_scope(trace_id="tr-1", event_id=event_id):
-        await call()  # ответ резервной из кэша
+        await call()  # повтор целиком из кэша резервной, основная не вызывается
 
     rows = db_conn.execute(
         "SELECT model, cached, fallback_from, error IS NOT NULL, event_id, trace_id, cost_rub "
@@ -24,8 +24,7 @@ async def test_calls_written_for_success_failure_and_cache(api, make_gw, pg_pool
     assert [r[:6] for r in rows] == [
         (PRIMARY, False, None, True, event_id, rows[0][5]),
         (FALLBACK, False, PRIMARY, False, event_id, rows[0][5]),
-        (PRIMARY, False, None, True, event_id, "tr-1"),
         (FALLBACK, True, PRIMARY, False, event_id, "tr-1"),
     ]
-    assert rows[3][6] == 0
+    assert rows[2][6] == 0
     assert db_conn.execute("SELECT count(*) FROM llm_cache").fetchone() == (1,)
