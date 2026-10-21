@@ -54,7 +54,19 @@ _BLOCK_TAGS = frozenset(
     {"p", "div", "br", "li", "ul", "ol", "tr", "table", "blockquote", "section", "article", "header"}
     | {"footer", "hr", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "dd", "dt", "figcaption", "main", "aside"}
 )
+_HIDDEN_NAMES = "|".join(sorted(_HIDDEN_TAGS))
+# имя тега в HTML кончается пробелом, «/» или «>»: <scripts> и <script-x> — не <script>
+_HIDDEN_OPEN_RE = re.compile(rf"<(?=({_HIDDEN_NAMES})[\s/>])", re.I)
+_HIDDEN_CLOSE_RE = re.compile(rf"</({_HIDDEN_NAMES})[\s>]", re.I)
+# тот же элемент закрывает предыдущий: <li>…<li>, <td>…<td>
 _IMPLICITLY_CLOSED = frozenset({"p", "li", "dt", "dd", "option", "tr", "td", "th"})
+# теги, которые по спецификации HTML закрывают открытый <p>; table — нет: зависит от режима документа,
+# а при сомнении скрытое должно остаться скрытым
+_CLOSES_P = frozenset(
+    {"address", "article", "aside", "blockquote", "details", "div", "dl", "fieldset", "figcaption", "figure"}
+    | {"footer", "header", "h1", "h2", "h3", "h4", "h5", "h6", "li", "dd", "dt", "main", "menu", "nav"}
+    | {"ol", "p", "pre", "section", "summary", "ul"}
+)
 _HIDDEN_STYLE_RE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
 # Сущность раскрывается в тег (&lt;b&gt;), тег — в сущность (&amp;lt;): повторяем до неподвижной точки.
 # Каждый проход, который что-то меняет, укорачивает текст; предел — только страховка.
@@ -160,7 +172,7 @@ class _TextExtractor(HTMLParser):
         if (
             self._open
             and (top := self._open[-1][0]) in _IMPLICITLY_CLOSED
-            and (top == tag or (top == "p" and tag in _BLOCK_TAGS))
+            and (top == tag or (top == "p" and tag in _CLOSES_P))
         ):
             self._close_to(len(self._open) - 1)
         hidden = tag in _HIDDEN_TAGS or _hidden_by_attrs(attrs)
@@ -199,16 +211,13 @@ class _TextExtractor(HTMLParser):
 def _keep_unclosed_hidden_as_text(text: str) -> str:
     # «добавляют тег <script> на страницу…» — упоминание, а не разметка: без закрывающего тега дальше
     # браузер спрятал бы всю новость. Открывающий тег после последнего закрывающего — текст.
-    lowered = text.lower()
-    for name in _HIDDEN_TAGS:
-        last_close = lowered.rfind(f"</{name}")
-        text = re.sub(
-            rf"<(?={name}\b)",
-            lambda m, last=last_close: "<" if m.start() < last else "&lt;",
-            text,
-            flags=re.I,
-        )
-    return text
+    # позиции — по исходному тексту, все замены одним проходом: замена удлиняет текст и сдвигала бы их
+    last_close: dict[str, int] = {}
+    for m in _HIDDEN_CLOSE_RE.finditer(text):
+        last_close[m.group(1).lower()] = m.start()
+    return _HIDDEN_OPEN_RE.sub(
+        lambda m: "<" if m.start() < last_close.get(m.group(1).lower(), -1) else "&lt;", text
+    )
 
 
 def _strip_html(text: str) -> str:

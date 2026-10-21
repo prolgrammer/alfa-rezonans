@@ -252,3 +252,21 @@ def test_random_fragment_mixes_are_idempotent_and_never_leak():
         body = "\n".join(wrap_source(1, raw).text.split("\n")[1:-1])
         assert not re.search(r"<\s*/?\s*[sѕ]\s*[oо]\s*urce", body, re.I), raw
         assert "<|" not in body, raw
+
+
+def test_mentions_of_several_hidden_tags_are_judged_by_original_positions():
+    # раньше решение по второму имени тега принималось по позициям, сдвинутым заменой первого
+    raw = "теги <script> <script> <script> упомянуты; <style></style>и <noscript>скрыто</noscript> видно"
+    assert sanitize(raw) == "теги <script> <script> <script> упомянуты; и видно"
+
+
+def test_tag_name_ends_at_space_slash_or_bracket():
+    assert sanitize("<scripts>текст</scripts>") == "<scripts>текст</scripts>"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["<p hidden>скрыто<table><tr><td>скрыто</td></tr></table>", "<p hidden>скрыто<span>скрыто</span>"],
+)
+def test_tags_that_do_not_close_p_keep_it_hidden(raw):
+    assert sanitize(raw) == ""
