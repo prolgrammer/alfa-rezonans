@@ -471,6 +471,11 @@ def _mark(verified: bool | None) -> str:
     return "" if verified is None else ("1" if verified else "0")
 
 
+def _cell(text: str) -> str:
+    # текст и цитата пришли из PDF и от модели: ячейку с «=», «+», «-», «@» Excel счёл бы формулой
+    return "'" + text if text.startswith(("=", "+", "-", "@", "\t", "\r")) else text
+
+
 def _numbers_cell(numbers: Sequence[ThesisNumber]) -> str:
     return "; ".join(
         f"{n.what}: {show_number(abs(Decimal(repr(n.value))))} {n.unit}".strip() for n in numbers
@@ -491,14 +496,14 @@ async def export_review(doc_id: int | None = None) -> tuple[str, int]:
         writer.writerow(
             (
                 item.id,
-                item.doc_title,
+                _cell(item.doc_title),
                 t.page,
                 t.kind.value,
                 ", ".join(t.factors),
                 t.direction.value,
-                t.text,
-                t.quote,
-                _numbers_cell(t.numbers),
+                _cell(t.text),
+                _cell(t.quote),
+                _cell(_numbers_cell(t.numbers)),
                 _mark(item.verified),
             )
         )

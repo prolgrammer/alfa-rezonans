@@ -223,11 +223,13 @@ async def test_list_and_set_verified(db, fake):
 
 
 async def test_review_csv_round_trip(db, fake, tmp_path):
-    fake(answer(HOLD, RATE))
+    fake(answer(HOLD, RATE | {"text": "=HYPERLINK(2027) " + RATE["text"]}))
     await extract_theses(1)
     fake(answer(CNY))
     await extract_theses(4)
     text, count = await export_review()
+    # формула из текста модели в Excel не исполнится
+    assert ";'=HYPERLINK(2027) Банк ждёт" in text
     assert count == 3
     lines = text.splitlines()
     assert lines[0] == "id;doc;page;kind;factors;direction;text;quote;numbers;ok"
