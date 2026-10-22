@@ -37,8 +37,25 @@ from app.db import get_pool
 from app.errors import NotFound
 from app.llm import LLMUnavailable, Scope, current_scope, gw, llm_scope
 from app.news.search import get_event_sources
-from app.text.sanitize import Flag, Source, Wrapped, neutralize, render_sources, sanitize, wrap_source
-from app.text.verify import QUOTE_MIN, date_mentioned, find_quote, numbers, quote_size, show_number
+from app.text.sanitize import (
+    Flag,
+    Source,
+    Wrapped,
+    neutralize,
+    render_sources,
+    sanitize,
+    strip_marks,
+    wrap_source,
+)
+from app.text.verify import (
+    QUOTE_MIN,
+    date_mentioned,
+    find_quote,
+    numbers,
+    quote_size,
+    show_number,
+    unit_matches,
+)
 
 log = logging.getLogger(__name__)
 
@@ -171,6 +188,7 @@ CARD_PROMPT = "event_card"
 # сколько ошибок и сколько текста элемента показать модели при перегенерации
 CARD_ERRORS_MAX = 15
 _ERROR_TEXT = 60
+NO_SUMMARY = "Описание события не прошло проверку по источникам."
 
 
 class _DraftFact(BaseModel):
@@ -282,6 +300,7 @@ def _texts(items: list[str], limit: int, count: int) -> list[str]:
 
 @dataclass
 class _Checked:
+    summary: str = ""
     summary_ok: bool = True
     facts: list[CardFact] = field(default_factory=list)
     claims: list[CardClaim] = field(default_factory=list)
@@ -298,7 +317,8 @@ class _Checked:
 class _Checker:
     def __init__(self, shown: Mapping[int, str]) -> None:
         self.shown = shown
-        self.numbers = {n: numbers(text) for n, text in shown.items()}
+        # пометки санитайзера («[base64 опущен: 1234 символов]») — не числа источника
+        self.numbers = {n: numbers(strip_marks(text)) for n, text in shown.items()}
         self.all_numbers: set[Decimal] = set().union(*self.numbers.values())
         self.out = _Checked()
 
@@ -320,8 +340,14 @@ class _Checker:
         if not found:
             self.fail(label, text, f"цитаты «{_clip(quote, _ERROR_TEXT)}» нет дословно ни в одном источнике")
             return None
-        valid = [n for n in dict.fromkeys(cites) if n in self.shown]
-        return valid + sorted(found - set(valid))
+        # первым — источник, где цитата стоит: его подсветит интерфейс
+        return sorted(found) + [n for n in dict.fromkeys(cites) if n in self.shown and n not in found]
+
+    def filled(self, label: str, text: str, quote: str | None = None) -> bool:
+        if not text:
+            self.fail(label, quote or "", "пустой текст элемента")
+            return False
+        return True
 
     def numbers_ok(self, label: str, text: str, cites: list[int] | None) -> bool:
         allowed = self.all_numbers if cites is None else set().union(*(self.numbers[n] for n in cites))
@@ -336,56 +362,57 @@ class _Checker:
 def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
     c = _Checker(shown)
     out = c.out
-    if not draft.summary.strip():
+    # числа сверяются в том виде, в каком текст попадёт в карточку: обрезка могла бы задеть число
+    out.summary = _clip(draft.summary, 600)
+    if not out.summary:
         out.summary_ok = False
         out.errors.append("summary: пустая сводка")
     else:
-        out.summary_ok = c.numbers_ok("summary", draft.summary, None)
+        out.summary_ok = c.numbers_ok("summary", out.summary, None)
     for i, fact in enumerate(draft.facts):
-        label = f"facts[{i}]"
-        cites = c.quoted(label, fact.text, fact.cites, fact.quote)
-        if cites is not None and c.numbers_ok(label, fact.text, cites):
-            out.facts.append(CardFact(text=_clip(fact.text, 400), cites=cites, quote=_clip(fact.quote, 500)))
-    for i, claim in enumerate(draft.claims):
-        label = f"claims[{i}]"
-        if not claim.who.strip():
-            c.fail(label, claim.text, "не сказано, чьё это мнение (who)")
+        label, text = f"facts[{i}]", _clip(fact.text, 400)
+        if not c.filled(label, text, fact.quote):
             continue
-        cites = c.quoted(label, claim.text, claim.cites, claim.quote)
-        if cites is not None and c.numbers_ok(label, claim.text, cites):
+        cites = c.quoted(label, text, fact.cites, fact.quote)
+        if cites is not None and c.numbers_ok(label, text, cites):
+            out.facts.append(CardFact(text=text, cites=cites, quote=_clip(fact.quote, 500)))
+    for i, claim in enumerate(draft.claims):
+        label, text = f"claims[{i}]", _clip(claim.text, 400)
+        if not c.filled(label, text, claim.quote):
+            continue
+        if not claim.who.strip():
+            c.fail(label, text, "не сказано, чьё это мнение (who)")
+            continue
+        cites = c.quoted(label, text, claim.cites, claim.quote)
+        if cites is not None and c.numbers_ok(label, text, cites):
             out.claims.append(
-                CardClaim(
-                    text=_clip(claim.text, 400),
-                    who=_clip(claim.who, 120),
-                    cites=cites,
-                    quote=_clip(claim.quote, 500),
-                )
+                CardClaim(text=text, who=_clip(claim.who, 120), cites=cites, quote=_clip(claim.quote, 500))
             )
     for i, number in enumerate(draft.numbers):
-        label = f"numbers[{i}]"
-        # у числа цитата может быть короткой («11,92 ₽»): значение всё равно сверяется с ней
-        if c.quoted(label, number.what, [], number.quote, min_size=1) is None:
+        label, what = f"numbers[{i}]", _clip(number.what, 120)
+        if not c.filled(label, what, number.quote):
+            continue
+        # у числа цитата может быть короткой («11,92 ₽»): значение сверяется с ней с учётом масштаба,
+        # а сама цитата ищется только целыми числами — «4%» не найдётся внутри «14%»
+        if c.quoted(label, what, [], number.quote, min_size=1) is None:
             continue
         value = abs(Decimal(repr(number.value)))
-        # и в источнике отдельным числом: короткая цитата «4» нашлась бы и внутри «14»
-        if value not in numbers(number.quote) or value not in c.all_numbers:
-            c.fail(label, number.what, f"значения {show_number(value)} нет в цитате")
+        unit = _clip(number.unit, 20)
+        if not unit_matches(value, unit, number.quote):
+            c.fail(label, what, f"значения {show_number(value)} {unit} нет в цитате")
             continue
         out.numbers.append(
-            CardNumber(
-                what=_clip(number.what, 120),
-                value=number.value,
-                unit=_clip(number.unit, 20),
-                quote=_clip(number.quote, 500),
-            )
+            CardNumber(what=what, value=number.value, unit=unit, quote=_clip(number.quote, 500))
         )
     for i, cause in enumerate(draft.causes):
-        label = f"causes[{i}]"
+        label, text = f"causes[{i}]", _clip(cause.text, 400)
+        if not c.filled(label, text):
+            continue
         cites = [n for n in dict.fromkeys(cause.cites) if n in shown]
         if not cites:
-            c.fail(label, cause.text, "нет номера показанного источника (cites)")
-        elif c.numbers_ok(label, cause.text, cites):
-            out.causes.append(CardCause(text=_clip(cause.text, 400), cites=cites))
+            c.fail(label, text, "нет номера показанного источника (cites)")
+        elif c.numbers_ok(label, text, cites):
+            out.causes.append(CardCause(text=text, cites=cites))
     for i, item in enumerate(draft.dates):
         label = f"dates[{i}]"
         try:
@@ -406,10 +433,11 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
             continue
         if factor.id in seen:
             continue
-        seen.add(factor.id)
+        # id занят только проверенным элементом: повтор с верной цитатой заменит первый с плохой
         if c.quoted(label, factor.id, [], factor.quote) is None:
             out.unquoted.append(factor)
             continue
+        seen.add(factor.id)
         out.factors.append(
             CardFactor(
                 id=factor.id,
@@ -459,9 +487,10 @@ def _strong_first(checked: _Checked, title: str, strong: frozenset[str]) -> list
 
 def _assemble(draft: CardDraft, checked: _Checked, title: str, strong: frozenset[str]) -> EventCard:
     if checked.summary_ok:
-        summary = draft.summary
+        summary = checked.summary
     else:
-        summary = " ".join(_sentence(f.text) for f in checked.facts[:2]) or title
+        # заголовок может опустеть после санитайзера, а сводка обязательна по контракту
+        summary = " ".join(_sentence(f.text) for f in checked.facts[:2]) or title or NO_SUMMARY
     return EventCard(
         summary=_clip(summary, 600),
         facts=checked.facts[:10],
@@ -503,8 +532,16 @@ def _card_scope(event_id: int | None) -> Iterator[Scope]:
         yield scope
 
 
-def _answer_model(scope: Scope, start: int) -> str | None:
-    return next((c.model for c in reversed(scope.calls[start:]) if c.task == "event_card"), None)
+def _answer_model(scope: Scope, start: int, event_id: int | None) -> str | None:
+    # во внешней области параллельно могут идти карточки других событий: берём вызов своего
+    return next(
+        (
+            c.model
+            for c in reversed(scope.calls[start:])
+            if c.task == "event_card" and (event_id is None or c.event_id == event_id)
+        ),
+        None,
+    )
 
 
 async def build_event_card(
@@ -539,7 +576,7 @@ async def build_event_card(
     with _card_scope(event_id) as scope:
         start = len(scope.calls)
         draft = await gw.json("event_card", CARD_PROMPT, variables, CardDraft, event_id=event_id)
-        model = _answer_model(scope, start)
+        model = _answer_model(scope, start, event_id)
         checked = _check(draft, shown)
         retried = bool(checked.errors)
         if retried:
@@ -560,13 +597,19 @@ async def build_event_card(
                     "карточка события %s: перегенерация не удалась, берём первый ответ: %s", event_id, error
                 )
             else:
-                draft, checked, model = second, _check(second, shown), _answer_model(scope, start)
+                draft, checked, model = second, _check(second, shown), _answer_model(scope, start, event_id)
     card = _assemble(draft, checked, title, strong)
     model = model or gw.config.task("event_card").model or ""
     return BuiltCard(card=card, model=model, retried=retried, removed=tuple(checked.errors))
 
 
-_card_locks: dict[int, asyncio.Lock] = {}
+@dataclass
+class _EventLock:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
+_card_locks: dict[int, _EventLock] = {}
 
 
 def _stored_card(event_id: int, raw: object) -> EventCard | None:
@@ -607,8 +650,16 @@ async def _save_card(event_id: int, card: EventCard | None, status: CardStatus, 
 
 async def extract_event_card(event_id: int) -> EventCard | None:
     # одно событие одновременно строится один раз: второй вызов дождётся первого и возьмёт его кэш
-    async with _card_locks.setdefault(event_id, asyncio.Lock()):
-        return await _extract_event_card(event_id)
+    entry = _card_locks.setdefault(event_id, _EventLock())
+    entry.users += 1
+    try:
+        async with entry.lock:
+            return await _extract_event_card(event_id)
+    finally:
+        # замок нужен, только пока событие строится или его ждут: иначе словарь рос бы весь век процесса
+        entry.users -= 1
+        if not entry.users:
+            del _card_locks[event_id]
 
 
 async def _extract_event_card(event_id: int) -> EventCard | None:
@@ -640,10 +691,12 @@ async def _extract_event_card(event_id: int) -> EventCard | None:
     except LLMUnavailable as error:
         log.warning("карточка события %s: модель недоступна (%s)", event_id, error)
         built = None
-    except Exception:
-        # ошибка кода, а не модели: статус не должен навсегда остаться pending
+    except BaseException:
+        # ошибка кода или отмена задачи, а не сбой модели: статус не должен навсегда остаться pending.
+        # Запись защищена от повторной отмены, а её собственный сбой не заслоняет исходную причину.
         if previous is None:
-            await _save_card(event_id, None, CardStatus.failed, None)
+            with contextlib.suppress(Exception):
+                await asyncio.shield(_save_card(event_id, None, CardStatus.failed, None))
         raise
     if built is None:
         if previous is None:

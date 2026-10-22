@@ -1,8 +1,16 @@
 import datetime as dt
 from decimal import Decimal
 
-from app.text.sanitize import COMMAND_MARK, TRUNCATED_MARK
-from app.text.verify import date_mentioned, find_quote, normalize, numbers, quote_size, show_number
+from app.text.sanitize import COMMAND_MARK, TRUNCATED_MARK, strip_marks
+from app.text.verify import (
+    date_mentioned,
+    find_quote,
+    normalize,
+    numbers,
+    quote_size,
+    show_number,
+    unit_matches,
+)
 
 NBSP = chr(0xA0)
 THIN = chr(0x202F)
@@ -92,3 +100,46 @@ def test_date_mentioned_forms():
     assert not date_mentioned(date, "Заседание 25 октября.")
     assert not date_mentioned(dt.date(2026, 10, 4), "Заседание 24 октября и 14.10.")
     assert date_mentioned(dt.date(2026, 10, 4), "Решение от 04.10.")
+
+
+def test_ellipsis_parts_must_be_long_and_close():
+    assert (
+        find_quote(f"в {ELLIPSIS} и {ELLIPSIS} на {ELLIPSIS} по {ELLIPSIS} от {ELLIPSIS} не", {1: SOURCE * 3})
+        == set()
+    )
+    far = "Совет директоров решил. " + "Другое. " * 40 + "Ставка сохранена на прежнем уровне."
+    assert find_quote(f"Совет директоров решил {ELLIPSIS} Ставка сохранена на прежнем", {1: far}) == set()
+
+
+def test_short_number_quote_matches_whole_numbers_only():
+    texts = {1: "Ключевая ставка 14%, заседание 4 ноября, рост 1,55%."}
+    assert find_quote("4%", texts, min_size=1) == set()
+    assert find_quote("14%", texts, min_size=1) == {1}
+    assert find_quote("1,5", texts, min_size=1) == set()
+    assert find_quote("4 ноября", texts, min_size=1) == {1}
+
+
+def test_unit_scale_and_percent():
+    assert unit_matches(Decimal("1.5"), "трлн ₽", "дефицит 1,5 трлн рублей")
+    assert not unit_matches(Decimal("1.5"), "млрд ₽", "дефицит 1,5 трлн рублей")
+    assert not unit_matches(Decimal("1.5"), "₽", "дефицит 1,5 трлн рублей")
+    assert unit_matches(Decimal(14), "%", "на уровне 14,0% годовых")
+    assert unit_matches(Decimal(3), "%", "снизятся на 3–5%")
+    assert unit_matches(Decimal(5), "%", "снизятся на 3–5%")
+    assert not unit_matches(Decimal(14), "%", "ставка 14 п. п.")
+    assert unit_matches(Decimal("11.92"), "₽", "составил 11,92 ₽")
+
+
+def test_numbers_skip_marks_and_letters():
+    assert numbers("площадь 50 м²") == {Decimal(50)}
+    assert numbers("модель Qwen3 и 2 сервера") == {Decimal(2)}
+
+
+def test_decimal_is_not_a_date():
+    assert not date_mentioned(dt.date(2026, 5, 1), "рост на 1.5% за год")
+    assert not date_mentioned(dt.date(2026, 5, 1), "рост на 1.5 % за год")
+
+
+def test_strip_marks_drops_base64_mark():
+    shown = "Вложение [base64 опущен: 1234 символов] к пресс-релизу, ставка 14%."
+    assert numbers(strip_marks(shown)) == {Decimal(14)}

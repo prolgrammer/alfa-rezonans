@@ -317,6 +317,7 @@ def _defuse_tags(text: str, flags: set[Flag]) -> str:
 # в ссылках (Диск, облака) короче порога.
 _B64_RE = re.compile(r"[A-Za-z0-9+/_-]{64,}={0,2}(?:[ \t]*\n[ \t]*[A-Za-z0-9+/_-]{16,}={0,2})*")
 _B64_MARK = "[base64 опущен: {} символов]"
+_B64_MARK_RE = re.compile(r"\[base64 опущен: \d+ символов\]")
 
 
 def _drop_base64(text: str, flags: set[Flag]) -> str:
@@ -425,7 +426,8 @@ TRUNCATED_MARK = " … [обрезано]"
 
 # для сверки цитаты модели с сохранённым текстом источника (ML-5): пометки кода в цитату не входят
 def strip_marks(text: str) -> str:
-    return text.replace(COMMAND_MARK, "").replace(TRUNCATED_MARK, "").translate({0x2039: "<", 0x203A: ">"})
+    text = _B64_MARK_RE.sub("", text.replace(COMMAND_MARK, "").replace(TRUNCATED_MARK, ""))
+    return text.translate({0x2039: "<", 0x203A: ">"})
 
 
 # --- обёртка <source> ---------------------------------------------------------------------------------

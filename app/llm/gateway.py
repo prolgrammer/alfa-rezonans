@@ -107,6 +107,7 @@ class ScopeCall:
     cost_rub: float
     cached: bool
     fallback_from: str | None
+    event_id: int | None = None
 
 
 @dataclass
@@ -660,7 +661,9 @@ class Gateway:
             scope.tokens_in += row.tokens_in
             scope.tokens_out += row.tokens_out
             scope.calls.append(
-                ScopeCall(row.task, row.model, row.ms, row.cost_rub, row.cached, row.fallback_from)
+                ScopeCall(
+                    row.task, row.model, row.ms, row.cost_rub, row.cached, row.fallback_from, row.event_id
+                )
             )
         await self._store.record(row)
 

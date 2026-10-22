@@ -76,12 +76,16 @@ class FakeGateway:
 
     config = CONFIG
 
-    def __init__(self, *answers: dict[str, Any] | Exception, model: str = PRIMARY, on_call=None) -> None:
+    def __init__(
+        self, *answers: dict[str, Any] | Exception, model: str = PRIMARY, on_call=None, recorded=None
+    ) -> None:
         self.answers = list(answers)
         self.prompts: list[str] = []
         self.calls: list[dict[str, Any]] = []
         self.model = model
         self.on_call = on_call
+        # модели, которые шлюз запишет в область на каждый вызов: провал основной и ответ резервной
+        self.recorded = list(recorded or [])
 
     def prompt_version(self, prompt: str) -> str:
         return PROMPTS.version(prompt)
@@ -97,7 +101,8 @@ class FakeGateway:
         if isinstance(answer, Exception):
             raise answer
         if (scope := current_scope()) is not None:
-            scope.calls.append(ScopeCall(task, self.model, 1, 0.0, False, None))
+            for model in self.recorded.pop(0) if self.recorded else [self.model]:
+                scope.calls.append(ScopeCall(task, model, 1, 0.0, False, None, event_id))
         return schema.model_validate(answer)
 
 
@@ -207,14 +212,15 @@ async def test_fact_number_must_be_in_cited_sources(fake):
     built = await build_event_card(TITLE, CardHints(), SOURCES)
     assert any("чисел 13 нет в источниках 1" in e for e in built.removed)
     # цитата нашлась во втором источнике: его номер добавлен, и число 2027 оттуда проходит
-    assert [(f.text, f.cites) for f in built.card.facts] == [("Снижение ставки ждут в 2027 году", [1, 2])]
+    assert [(f.text, f.cites) for f in built.card.facts] == [("Снижение ставки ждут в 2027 году", [2, 1])]
 
 
 async def test_cites_outside_shown_are_dropped_and_found_source_added(fake):
     fact = {"text": "Ставка сохранена", "cites": [7, 0, 2, 2], "quote": RATE_QUOTE}
     fake(with_(facts=[fact]))
     built = await build_event_card(TITLE, CardHints(), SOURCES)
-    assert built.card.facts[0].cites == [2, 1]
+    # первым — источник, где цитата стоит; номер модели в пределах показанных остаётся
+    assert built.card.facts[0].cites == [1, 2]
     assert not built.retried
 
 
@@ -234,19 +240,19 @@ async def test_number_value_must_be_in_its_quote(fake):
     fake(with_(numbers=numbers), with_(numbers=numbers))
     built = await build_event_card(TITLE, CardHints(), SOURCES)
     assert [n.what for n in built.card.numbers] == ["цель по инфляции"]
-    assert "значения 13.5 нет в цитате" in built.removed[0]
+    assert "значения 13.5 % нет в цитате" in built.removed[0]
 
 
 async def test_number_quote_may_be_short_but_must_hold_whole_number(fake):
     numbers = [
         {"what": "ставка", "value": 14, "unit": "%", "quote": "14,0%"},
-        {"what": "цель", "value": 4, "unit": "%", "quote": "4"},
+        {"what": "цель", "value": 4, "unit": "%", "quote": "4%"},
         {"what": "часть числа", "value": 1, "unit": "%", "quote": "14,0%"},
     ]
     fake(with_(numbers=numbers), with_(numbers=numbers))
     built = await build_event_card(TITLE, CardHints(), SOURCES)
     assert [n.what for n in built.card.numbers] == ["ставка", "цель"]
-    assert built.removed == ("numbers[2] «часть числа»: значения 1 нет в цитате",)
+    assert built.removed == ("numbers[2] «часть числа»: значения 1 % нет в цитате",)
     fake(with_(numbers=[{"what": "выдумка", "value": 7, "unit": "%", "quote": "7"}]), with_(numbers=[]))
     built = await build_event_card(TITLE, CardHints(), SOURCES)
     assert built.retried and built.card.numbers == []
@@ -429,6 +435,120 @@ async def test_model_of_used_answer_goes_to_result(fake):
     assert built.model == "deepseek-v4.1-flash"
 
 
+def one_source(text: str) -> list[SourceFragment]:
+    return [SOURCES[0].model_copy(update={"text": text})]
+
+
+async def test_ellipsis_cannot_glue_short_words(fake):
+    source = one_source(
+        "Банк России не стал повышать ключевую ставку, хотя часть аналитиков ждала, "
+        "что регулятор повысит её до 16%."
+    )
+    quote = "Банк России … повысит … до 16%"
+    fact = {"text": "Банк России повысит ставку до 16%", "cites": [1], "quote": quote}
+    fake(with_(facts=[fact]), with_(facts=[fact]))
+    built = await build_event_card(TITLE, CardHints(), source)
+    assert built.card.facts == []
+
+
+async def test_number_scale_must_match_quote(fake):
+    source = one_source("Дефицит бюджета составил 1,5 трлн рублей, рост на 1.5% за год.")
+    numbers = [
+        {"what": "дефицит", "value": 1.5, "unit": "млрд ₽", "quote": "1,5 трлн рублей"},
+        {"what": "дефицит", "value": 1.5, "unit": "трлн ₽", "quote": "составил 1,5 трлн рублей"},
+    ]
+    dates = [{"what": "не дата", "date": "2026-05-01"}]
+    answer = with_(
+        numbers=numbers, dates=dates, facts=[], claims=[], causes=[], factors=[], summary="Дефицит."
+    )
+    fake(answer, answer)
+    built = await build_event_card(TITLE, CardHints(), source)
+    assert [n.unit for n in built.card.numbers] == ["трлн ₽"]
+    assert built.card.dates == []
+    assert "значения 1.5 млрд ₽ нет в цитате" in built.removed[0]
+
+
+async def test_clip_cannot_change_a_checked_number(fake):
+    source = one_source("Выручка составила 1 500 000 рублей по итогам года, сообщила компания.")
+    # текст длиннее 400: обрезка задела бы «1 500 000», поэтому числа сверяются уже после неё
+    fact = {
+        "text": "слово " * 64 + "выручка 1 500 000 рублей",
+        "cites": [1],
+        "quote": "Выручка составила 1 500 000 рублей",
+    }
+    fake(with_(facts=[fact], summary="Итог."), with_(facts=[fact], summary="Итог."))
+    built = await build_event_card(TITLE, CardHints(), source)
+    assert built.card.facts == []
+    assert "чисел" in built.removed[0]
+
+
+async def test_duplicate_factor_with_good_quote_replaces_bad_one(fake):
+    bad_quote = "ставка не менялась вовсе никогда"
+    factors = [
+        {"id": "key_rate", "direction": "up", "magnitude": "high", "quote": bad_quote},
+        {"id": "key_rate", "direction": "flat", "magnitude": "high", "quote": RATE_QUOTE},
+    ]
+    fake(with_(factors=factors), with_(factors=factors))
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert [(f.id, f.direction) for f in built.card.factors] == [("key_rate", "flat")]
+
+
+async def test_empty_texts_are_removed(fake):
+    empty = with_(
+        facts=[{"text": "  ", "cites": [1], "quote": RATE_QUOTE}],
+        causes=[{"text": "", "cites": [1]}],
+        numbers=[{"what": "", "value": 14, "unit": "%", "quote": RATE_QUOTE}],
+    )
+    fake(empty, empty)
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert (built.card.facts, built.card.causes, built.card.numbers) == ([], [], [])
+    assert len(built.removed) == 3
+    assert all("пустой текст элемента" in e for e in built.removed)
+
+
+async def test_title_empty_after_sanitize_still_gives_summary(fake):
+    empty = with_(summary="", facts=[])
+    fake(empty, empty)
+    built = await build_event_card("<script>x</script>", CardHints(), SOURCES)
+    assert built.card.summary == extract.NO_SUMMARY
+
+
+async def test_model_is_the_last_recorded_call(fake):
+    fake(good(), recorded=[[PRIMARY, "deepseek-v4.1-flash"]])
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert built.model == "deepseek-v4.1-flash"
+
+
+async def test_model_comes_from_the_retry_answer(fake):
+    bad = with_(facts=[{"text": "Выдумка", "cites": [1], "quote": "этого в тексте нет совсем"}])
+    fake(bad, good(), recorded=[[PRIMARY], ["deepseek-v4.1-flash"]])
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert built.model == "deepseek-v4.1-flash"
+
+
+async def test_parallel_cards_in_outer_scope_keep_their_models(fake, monkeypatch):
+    gateway = fake(good(), good(), recorded=[[PRIMARY], ["deepseek-v4.1-flash"]])
+    gate = asyncio.Event()
+
+    async def held(*args, **kwargs):
+        # первая карточка отвечает последней: её вызов в области — не последний
+        answer = await original(*args, **kwargs)
+        if kwargs.get("event_id") == 1:
+            await gate.wait()
+        else:
+            gate.set()
+        return answer
+
+    original = gateway.json
+    monkeypatch.setattr(gateway, "json", held)
+    with llm_scope():
+        first, second = await asyncio.gather(
+            build_event_card(TITLE, CardHints(), SOURCES, event_id=1),
+            build_event_card(TITLE, CardHints(), SOURCES, event_id=2),
+        )
+    assert (first.model, second.model) == (PRIMARY, "deepseek-v4.1-flash")
+
+
 def test_real_prompt_renders():
     text, version = PROMPTS.render(
         "event_card",
@@ -583,12 +703,31 @@ async def test_code_error_is_raised_and_not_left_pending(db, fake):
     assert (await stored(db))["card_status"] == "failed"
 
 
+async def test_cancel_does_not_leave_pending(db, fake):
+    await insert_event(db)
+    started = asyncio.Event()
+
+    async def block():
+        started.set()
+        await asyncio.sleep(10)
+
+    fake(good(), on_call=block)
+    task = asyncio.create_task(extract_event_card(1))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert (await stored(db))["card_status"] == "failed"
+    assert extract._card_locks == {}
+
+
 async def test_concurrent_calls_build_once(db, fake):
     await insert_event(db)
     gateway = fake(good(), good())
     first, second = await asyncio.gather(extract_event_card(1), extract_event_card(1))
     assert first == second
     assert len(gateway.calls) == 1
+    assert extract._card_locks == {}
 
 
 async def test_card_failing_contract_is_rebuilt(db, fake):
