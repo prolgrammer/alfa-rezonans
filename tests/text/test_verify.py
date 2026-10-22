@@ -3,9 +3,11 @@ from decimal import Decimal
 
 from app.text.sanitize import COMMAND_MARK, TRUNCATED_MARK, strip_marks
 from app.text.verify import (
+    clip,
     date_mentioned,
     find_quote,
     normalize,
+    number_marks,
     numbers,
     quote_size,
     show_number,
@@ -128,6 +130,34 @@ def test_unit_scale_and_percent():
     assert unit_matches(Decimal(5), "%", "снизятся на 3–5%")
     assert not unit_matches(Decimal(14), "%", "ставка 14 п. п.")
     assert unit_matches(Decimal("11.92"), "₽", "составил 11,92 ₽")
+
+
+def test_percentage_point_is_not_percent():
+    assert unit_matches(Decimal(1), "п. п.", "снизил на 1 процентный пункт")
+    assert not unit_matches(Decimal(1), "%", "снизил на 1 процентный пункт")
+    assert unit_matches(Decimal(7), "процентов", "рост на 7 процентов")
+    assert unit_matches(Decimal(7), "%", "рост на 7 процентов")
+
+
+def test_number_marks_keep_scale_and_percent():
+    assert number_marks("выручка 1,5 миллиарда рублей, рост 7% к 2025 году") == {
+        (Decimal("1.5"), "млрд", False),
+        (Decimal(7), None, True),
+        (Decimal(2025), None, False),
+    }
+    rub = {(Decimal("11.5"), None, False), (Decimal("12.5"), None, False)}
+    assert number_marks("курс 11,5–12,5 ₽") == rub
+    assert number_marks("инфляция 6,0-6,5%") == {(Decimal("6.0"), None, True), (Decimal("6.5"), None, True)}
+    # 14 и 14,0 — одно значение
+    assert (Decimal(14), None, True) in number_marks("ставка 14,0%")
+    assert number_marks("без чисел") == set()
+
+
+def test_clip_keeps_prefix_verbatim():
+    assert clip("  ставка   сохранена ", 100) == "ставка сохранена"
+    clipped = clip("ключевая ставка сохранена на уровне 14%", 25)
+    assert clipped.endswith("…") and len(clipped) <= 25
+    assert "ключевая ставка сохранена".startswith(clipped.removesuffix("…"))
 
 
 def test_numbers_skip_marks_and_letters():

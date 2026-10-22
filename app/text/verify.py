@@ -30,6 +30,8 @@ _SCALE_WORDS = (
 )
 # хвост диапазона «3-5%»: единица стоит после второго числа
 _RANGE_TAIL_RE = re.compile(r"-\s?\d+(?:[.,]\d+)?\s?")
+# «процентный пункт» — не процент: «на 1 процентный пункт» не проходит как 1%
+_PERCENT_RE = re.compile(r"%|процент(?!н)")
 _MONTHS = (
     "января",
     "февраля",
@@ -123,27 +125,44 @@ def _short_scales(text: str) -> str:
     return text
 
 
-def unit_matches(value: Decimal, unit: str, quote: str) -> bool:
-    """Значение стоит в цитате с тем же масштабом (тыс, млн, млрд, трлн), а процент — с «%».
+type NumberMark = tuple[Decimal, str | None, bool]
 
-    Без этого «1,5 трлн рублей» прошло бы как 1,5 млрд ₽.
+
+def number_marks(text: str) -> set[NumberMark]:
+    """Числа текста с масштабом (тыс, млн, млрд, трлн) и признаком процента после них.
+
+    Число без масштаба и «1,5 млрд» — разные отметки: так «1,5 трлн рублей» не пройдёт как 1,5 млрд ₽.
     """
-    unit, text = _short_scales(normalize(unit)), _short_scales(normalize(quote))
-    scale = _SCALE_RE.search(unit)
-    want = scale.group(0) if scale else None
+    text = _short_scales(normalize(text))
+    marks: set[NumberMark] = set()
     for m in _NUMBER_RE.finditer(text):
-        if Decimal(m.group(0).replace(" ", "").replace(",", ".")) != value:
-            continue
         after = text[m.end() :].lstrip()
-        after = after[_RANGE_TAIL_RE.match(after).end() :] if _RANGE_TAIL_RE.match(after) else after
-        got = _SCALE_RE.match(after)
-        if (got.group(0) if got else None) != want:
-            continue
-        # процент — в обе стороны: «5%» не проходит как 5 ₽
-        if ("%" in unit) != after.startswith(("%", "процент")):
-            continue
-        return True
-    return False
+        if tail := _RANGE_TAIL_RE.match(after):
+            after = after[tail.end() :]
+        scale = _SCALE_RE.match(after)
+        value = Decimal(m.group(0).replace(" ", "").replace(",", "."))
+        marks.add((value, scale.group(0) if scale else None, bool(_PERCENT_RE.match(after))))
+    return marks
+
+
+def unit_matches(value: Decimal, unit: str, quote: str) -> bool:
+    """Значение стоит в цитате с масштабом из единицы, а процент — с «%» (в обе стороны: «5%» — не 5 ₽)."""
+    unit = _short_scales(normalize(unit))
+    scale = _SCALE_RE.search(unit)
+    want = (value, scale.group(0) if scale else None, bool(_PERCENT_RE.search(unit)))
+    return want in number_marks(quote)
+
+
+def clip(text: str, limit: int) -> str:
+    """Схлопывает пробелы и обрезает по слову с «…»: префикс дословной цитаты остаётся дословным."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if space >= limit * 0.6:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:") + "…"
 
 
 def show_number(value: Decimal) -> str:

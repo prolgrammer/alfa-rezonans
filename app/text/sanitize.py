@@ -99,6 +99,12 @@ class Wrapped:
     flags: frozenset[Flag]
     truncated: bool
 
+    @property
+    def body(self) -> str:
+        """Текст источника в том виде, какой видела модель: между строкой <source …> и </source>."""
+        _, _, rest = self.text.partition("\n")
+        return rest.removesuffix("</source>").removesuffix("\n")
+
 
 @dataclass(frozen=True)
 class Rendered:
