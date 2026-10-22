@@ -291,3 +291,38 @@ async def test_verified_thesis_missing_from_new_set_is_kept(db, fake):
         (HOLD["quote"], True),
     ]
     assert {r["prompt_version"] for r in saved} == {"bank_theses@2"}
+
+
+async def test_paraphrase_of_verified_thesis_does_not_duplicate_it(db, fake):
+    fake(answer(HOLD, RATE))
+    await extract_theses(1)
+    hold_id, _ = (r["id"] for r in await rows(db))
+    await set_verified(hold_id, True)
+    paraphrase = HOLD | {"text": "Совет директоров оставил ставку 14,0% и стал жестче в тоне."}
+    fake(answer(paraphrase, RATE), version="bank_theses@2")
+    result = await extract_theses(1, force=True)
+    assert len(result) == 2
+    saved = await rows(db)
+    assert [(r["payload"]["text"], r["verified"]) for r in saved] == [
+        (RATE["text"], None),
+        (HOLD["text"], True),
+    ]
+    assert {r["prompt_version"] for r in saved} == {"bank_theses@2"}
+    assert [t.text for t in result] == [RATE["text"], HOLD["text"]]
+
+
+async def test_mark_set_while_model_is_called_is_kept(db, fake):
+    fake(answer(HOLD, RATE))
+    await extract_theses(1)
+    hold_id, _ = (r["id"] for r in await rows(db))
+    gateway = fake(answer(HOLD, RATE))
+    ask = gateway.json
+
+    async def json_with_review(*args, **kwargs):
+        # человек вычитывает тезис, пока идёт перестроение
+        await set_verified(hold_id, True)
+        return await ask(*args, **kwargs)
+
+    gateway.json = json_with_review
+    await extract_theses(1, force=True)
+    assert [r["verified"] for r in await rows(db)] == [True, None]

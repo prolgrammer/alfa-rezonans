@@ -246,3 +246,60 @@ def test_range_tail_is_not_applied_to_year():
 def test_sign_is_not_checked():
     # известное ограничение: знак проверяет вычитка, «снизится на 2%» и «−2%» — одно и то же
     assert unit_matches(Decimal(2), "%", "ВВП: -2%")
+
+
+def test_currency_symbol_before_number():
+    assert number_marks("$80") == {(Decimal(80), None, "usd")}
+    assert number_marks("на $5 млрд") == {(Decimal(5), "млрд", "usd")}
+    assert number_marks("цена € 50") == {(Decimal(50), None, "eur")}
+    assert unit_matches(Decimal(80), "$", "Brent вырос до $80 за баррель")
+    assert unit_matches(Decimal(80), "$/барр.", "нефть $80/барр.")
+    assert unit_matches(Decimal(5), "млрд $", "на $5 млрд")
+    assert not unit_matches(Decimal(80), "€", "Brent вырос до $80 за баррель")
+    # единица после числа сильнее символа перед ним
+    assert number_marks("$80 рублей") == {(Decimal(80), None, "rub")}
+    assert mark_in((Decimal(80), None, "usd"), number_marks("$80"))
+    assert not mark_in((Decimal(80), None, "usd"), number_marks("€80"))
+    assert not mark_in((Decimal(80), None, "eur"), number_marks("$80"))
+
+
+def test_unit_words_have_boundaries():
+    assert number_marks("100 европейских банков") == {(Decimal(100), None, None)}
+    assert number_marks("100 евро") == {(Decimal(100), None, "eur")}
+    assert number_marks("2 рубежа") == {(Decimal(2), None, None)}
+    assert number_marks("3 рубля, 5 руб., 7 рублей, 9 руб") == {
+        (Decimal(3), None, "rub"),
+        (Decimal(5), None, "rub"),
+        (Decimal(7), None, "rub"),
+        (Decimal(9), None, "rub"),
+    }
+    assert number_marks("5 долл. и 6 долларов") == {(Decimal(5), None, "usd"), (Decimal(6), None, "usd")}
+    assert number_marks("5 доллеров") == {(Decimal(5), None, None)}
+    assert number_marks("7 юаней") == {(Decimal(7), None, "cny")}
+
+
+def test_latin_currency_codes_and_basis_points():
+    assert number_marks("80 USD, 5 EUR, 3 CNY, 2 RUB") == {
+        (Decimal(80), None, "usd"),
+        (Decimal(5), None, "eur"),
+        (Decimal(3), None, "cny"),
+        (Decimal(2), None, "rub"),
+    }
+    assert number_marks("25 bps и 10 bp") == {(Decimal(25), None, "bp"), (Decimal(10), None, "bp")}
+    assert unit_matches(Decimal(25), "б.п.", "25 bps")
+    assert unit_matches(Decimal(100), "$", "100 USD")
+    # код валюты перед числом не поддерживается: валюта — только символ или суффикс
+    assert number_marks("USD 80") == {(Decimal(80), None, None)}
+    assert number_marks("100 usdt") == {(Decimal(100), None, None)}
+
+
+def test_year_like_range_start_gets_unit_unless_row_label():
+    both = {(Decimal(2000), None, "rub"), (Decimal(2500), None, "rub")}
+    assert number_marks("2000–2500 руб.") == both
+    assert unit_matches(Decimal(2000), "₽", "стоит 2000–2500 руб.")
+    assert number_marks("2025 — 6,5%, 2026 — 4,0%") == {
+        (Decimal(2025), None, None),
+        (Decimal(2026), None, None),
+        (Decimal("6.5"), None, "%"),
+        (Decimal("4.0"), None, "%"),
+    }

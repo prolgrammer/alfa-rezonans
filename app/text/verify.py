@@ -30,19 +30,22 @@ _SCALE_WORDS = (
 )
 # хвост диапазона «3-5%»: единица стоит после второго числа
 _RANGE_TAIL_RE = re.compile(r"-\s?\d+(?:[.,]\d+)?\s?")
-# закрытый набор единиц после числа; «процентный пункт» — не процент, поэтому pp раньше pct
+# закрытый набор единиц после числа; «процентный пункт» — не процент, поэтому pp раньше pct.
+# У коротких основ — граница слова: «руб» не должно находиться в «рубеж», «евро» — в «европейских»
 _UNIT_RE = re.compile(
-    r"(?P<pp>п\. ?п\.?|\bпп\b|процентн\w* пункт\w*)"
-    r"|(?P<bp>б\. ?п\.?|базисн\w* пункт\w*)"
+    r"(?P<pp>п\. ?п\.?|(?<!\w)пп(?!\w)|процентн\w* пункт\w*)"
+    r"|(?P<bp>б\. ?п\.?|базисн\w* пункт\w*|(?<!\w)bps?(?!\w))"
     r"|(?P<pct>%|процент(?!н))"
-    r"|(?P<rub>₽|руб)"
-    r"|(?P<usd>\$|долл)"
-    r"|(?P<eur>€|евро)"
-    r"|(?P<cny>¥|юан)"
+    r"|(?P<rub>₽|(?<!\w)руб(?:л\w*)?(?!\w)|(?<!\w)rub(?!\w))"
+    r"|(?P<usd>\$|(?<!\w)долл(?:ар\w*)?(?!\w)|(?<!\w)usd(?!\w))"
+    r"|(?P<eur>€|(?<!\w)евро(?!\w)|(?<!\w)eur(?!\w))"
+    r"|(?P<cny>¥|(?<!\w)юан\w*|(?<!\w)cny(?!\w))"
     r"|(?P<times>раз(?:а)?(?!\w))"
 )
+# валюта перед числом: «$80», «на € 5 млрд»
+_CURRENCY_PREFIX = {"$": "usd", "€": "eur", "¥": "cny", "₽": "rub"}
 _UNIT_NAMES = {"pct": "%"}
-# «2025 — 6,5%»: год не получает единицу следующего числа
+# «2025 — 6,5%»: год с пробелом перед тире не получает единицу следующего числа
 _YEAR_RE = re.compile(r"(?:19|20)\d\d")
 # если искомое число без валюты, цитата может уточнять его валютой или «раз»; «%», pp и bp строгие
 _LOOSE_UNITS = frozenset({"rub", "usd", "eur", "cny", "times"})
@@ -158,15 +161,21 @@ def number_marks(text: str) -> set[NumberMark]:
     marks: set[NumberMark] = set()
     for m in _NUMBER_RE.finditer(text):
         after = text[m.end() :].lstrip()
-        year = _YEAR_RE.fullmatch(m.group(0)) is not None
-        if not year and (tail := _RANGE_TAIL_RE.match(after)):
+        # «2025 - 6,5%»: год с пробелом перед тире — подпись строки таблицы; «2000-2500 руб.» — диапазон
+        year_label = _YEAR_RE.fullmatch(m.group(0)) is not None and text[m.end() : m.end() + 1].isspace()
+        if not year_label and (tail := _RANGE_TAIL_RE.match(after)):
             after = after[tail.end() :]
         scale = _SCALE_RE.match(after)
         if scale:
             # «тыс. руб.»: точка после масштаба относится к сокращению
             after = after[scale.end() :].lstrip(" .")
         value = Decimal(m.group(0).replace(" ", "").replace(",", "."))
-        marks.add((value, scale.group(0) if scale else None, _unit(_UNIT_RE.match(after))))
+        unit = _unit(_UNIT_RE.match(after))
+        if unit is None:
+            # единицы после числа нет — смотрим символ валюты перед ним
+            before = text[: m.start()].rstrip()
+            unit = _CURRENCY_PREFIX.get(before[-1:])
+        marks.add((value, scale.group(0) if scale else None, unit))
     return marks
 
 

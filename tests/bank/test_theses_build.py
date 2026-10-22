@@ -373,3 +373,28 @@ async def test_repeat_of_accepted_thesis_does_not_take_correction_slot(fake):
     built = await build_theses(TITLE, DATE, await doc1())
     assert [t.text for t in built.theses] == [rate_hold()["text"], fixed["text"]]
     assert built.removed == ()
+
+
+async def test_currency_symbol_before_number_matches_word_in_text(fake):
+    page = "Brent вырос до $80 за баррель и может достичь €90."
+    built, gateway = await check_page(
+        fake, page, "Нефть стоит 80 долларов за баррель.", "Brent вырос до $80 за баррель"
+    )
+    assert len(built.theses) == 1 and len(gateway.prompts) == 1
+    built, gateway = await check_page(
+        fake, page, "Нефть стоит 80 евро за баррель.", "Brent вырос до $80 за баррель"
+    )
+    assert built.theses == () and "нет в цитате" in gateway.prompts[1]
+
+
+async def test_skipped_first_correction_keeps_clipped_original(fake):
+    # два тезиса с неизвестным фактором: в урезанном виде валидны; модель исправила только второй
+    first = rate_hold(factors=["key_rate", "no_such"])
+    second = thesis(factors=["key_rate", "no_such"])
+    second_fixed = thesis(text="Снижение ставки ждут не раньше 2027 года.")
+    fake(answer(first, second), answer(second_fixed))
+    built = await build_theses(TITLE, DATE, await doc1())
+    assert sorted((t.page, t.text) for t in built.theses) == [
+        (1, first["text"]),
+        (3, second_fixed["text"]),
+    ]

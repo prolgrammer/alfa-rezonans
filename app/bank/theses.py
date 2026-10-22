@@ -292,7 +292,11 @@ async def build_theses(
             for k, checked in enumerate(second):
                 if checked.thesis is not None:
                     collected.add(checked.thesis)
-                    fixed.add(k)
+                    # исправление заменяет оригинал только на той же странице: модель могла пропустить
+                    # первое исправление, и тогда ответ на второй тезис встал бы на чужую позицию
+                    original = failed[k].thesis
+                    if original is not None and original.page == checked.thesis.page:
+                        fixed.add(k)
                 removed.extend(checked.errors)
             if len(second) < len(failed):
                 removed.append(
@@ -357,47 +361,68 @@ async def _doc(doc_id: int) -> _Doc:
     return _Doc(row["title"], row["published_on"])
 
 
+def _parse_stored(rows: Sequence[Mapping[str, Any]]) -> list[_Stored]:
+    return [
+        _Stored(BankThesis.model_validate(r["payload"]), r["verified"], r["prompt_version"]) for r in rows
+    ]
+
+
+_STORED_SQL = "SELECT payload, verified, prompt_version FROM bank_theses WHERE doc_id = %s ORDER BY id"
+
+
 async def _stored(doc_id: int) -> list[_Stored] | None:
     """Сохранённые тезисы документа; None — какой-то не проходит контракт, и документ строится заново."""
     async with (await get_pool()).connection() as conn:
-        cursor = await conn.execute(
-            "SELECT payload, verified, prompt_version FROM bank_theses WHERE doc_id = %s ORDER BY id",
-            (doc_id,),
-        )
+        cursor = await conn.execute(_STORED_SQL, (doc_id,))
         rows = await cursor.fetchall()
     try:
-        return [
-            _Stored(BankThesis.model_validate(r["payload"]), r["verified"], r["prompt_version"]) for r in rows
-        ]
+        return _parse_stored(rows)
     except ValidationError:
         log.warning("тезисы документа %s не проходят текущий контракт: строим заново", doc_id)
         return None
 
 
 async def _replace(
-    doc_id: int,
-    theses: Sequence[BankThesis],
-    published_on: dt.date,
-    version: str,
-    previous: Sequence[_Stored],
+    doc_id: int, theses: Sequence[BankThesis], published_on: dt.date, version: str
 ) -> list[BankThesis]:
-    """Заменяет тезисы документа; возвращает вычитанные, которых нет в новом наборе, — они сохранены."""
-    # отметка вычитки переносится, только если человек проверял то же утверждение с той же цитатой
-    marks = {_key(s.thesis): s.verified for s in previous if s.verified is not None}
-    new_keys = {_key(t) for t in theses}
-    # вычитку делали люди: набор, который её не повторил, не должен её стереть
-    kept = [s.thesis for s in previous if s.verified is True and _key(s.thesis) not in new_keys]
-    if kept:
-        log.info(
-            "тезисы документа %s: сохранено вычитанных тезисов, которых нет в новом наборе: %s",
-            doc_id,
-            len(kept),
-        )
+    """Заменяет тезисы документа и возвращает записанный набор.
+
+    Вычитка читается из БД под замком, а не берётся из состояния до вызова модели: отметка, поставленная
+    за время перестроения, не теряется.
+    """
     async with (await get_pool()).connection() as conn, conn.transaction():
         # замок на документ между процессами (CLI и worker): без него оба DELETE не увидят вставок друг друга
         await conn.execute("SELECT pg_advisory_xact_lock(%s, %s::int)", (_LOCK_SPACE, doc_id & 0x7FFFFFFF))
+        cursor = await conn.execute(_STORED_SQL, (doc_id,))
+        current = []
+        for row in await cursor.fetchall():
+            try:
+                current.extend(_parse_stored([row]))
+            except ValidationError:
+                # строка не проходит контракт: вычитку с неё не переносим
+                continue
+        # отметка вычитки переносится, только если человек проверял то же утверждение с той же цитатой
+        marks = {_key(s.thesis): s.verified for s in current if s.verified is not None}
+        written = list(theses)
+        kept: list[BankThesis] = []
+        # вычитку делали люди: набор, который её не повторил, не должен её стереть
+        for s in current:
+            if s.verified is not True:
+                continue
+            quote, text = key = _key(s.thesis)
+            if any(_key(t) == key for t in written):
+                continue
+            # тот же тезис, но иначе сформулированный или с другой цитатой: вычитанный важнее нового
+            written = [t for t in written if _key(t)[0] != quote and _key(t)[1] != text]
+            kept.append(s.thesis)
+        if kept:
+            log.info(
+                "тезисы документа %s: сохранено вычитанных тезисов поверх нового набора: %s",
+                doc_id,
+                len(kept),
+            )
         await conn.execute("DELETE FROM bank_theses WHERE doc_id = %s", (doc_id,))
-        for thesis in [*theses, *kept]:
+        for thesis in [*written, *kept]:
             await conn.execute(
                 "INSERT INTO bank_theses (doc_id, page, payload, factors, kind, published_on, verified, "
                 "prompt_version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -412,7 +437,7 @@ async def _replace(
                     version,
                 ),
             )
-    return kept
+    return [*written, *kept]
 
 
 async def extract_theses(doc_id: int, *, force: bool = False) -> list[BankThesis]:
@@ -442,8 +467,7 @@ async def extract_theses(doc_id: int, *, force: bool = False) -> list[BankThesis
         if not built.theses and previous:
             log.warning("тезисы документа %s: новый набор пуст, прежние тезисы оставлены", doc_id)
             return [s.thesis for s in previous]
-        kept = await _replace(doc_id, built.theses, doc.published_on, version, previous)
-        return [*built.theses, *kept]
+        return await _replace(doc_id, built.theses, doc.published_on, version)
 
 
 # --- позиция банка и вычитка -------------------------------------------------------------------------------
