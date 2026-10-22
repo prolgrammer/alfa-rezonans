@@ -51,7 +51,7 @@ async def test_prompt_text_reaches_model(api, make_gw):
     assert body["messages"][0] == {"role": "user", "content": "Скажи мир"}
     assert body["model"] == f"gpt://{FOLDER}/{PRIMARY}/latest"
     assert body["temperature"] == 0.1
-    assert body["max_tokens"] == 1500
+    assert body["max_tokens"] == 2500
 
 
 async def test_fallback_on_503(api, make_gw, store):

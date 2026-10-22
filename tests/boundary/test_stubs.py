@@ -18,7 +18,7 @@ from app.contracts import (
     ChatAnswer,
     ChatTurn,
     CounterpartyShare,
-    EventCard,
+    Event,
     Exposure,
     FeedFilters,
     FeedItem,
@@ -33,8 +33,9 @@ from app.contracts import (
     ThesisItem,
     UserRole,
 )
+from app.fixtures import load_fixture
 from app.llm.gateway import LLMUnavailable, ToolSpec, gw
-from app.news.extract import extract_event_card, news_filter
+from app.news.extract import CardHints, build_event_card, news_filter
 from app.news.search import get_event_sources, search_bank_chunks, search_news
 from app.rank.feed import explain, highlights, rank_feed, warm_list
 from app.rank.judge import rank_judge
@@ -177,11 +178,12 @@ async def test_news_filter_passes_everything():
     assert (result.raw_item_id, result.business) == (7, True)
 
 
-async def test_extract_event_card():
-    card = await extract_event_card(1)
-    assert isinstance(card, EventCard)
-    assert card.event_type == "regulator_decision"
-    assert await extract_event_card(999) is None
+async def test_event_card_without_llm_raises():
+    # без ключа модель недоступна: extract_event_card превращает это в card_status=failed
+    sources = await get_event_sources(1)
+    with pytest.raises(LLMUnavailable):
+        await build_event_card("Банк России сохранил ключевую ставку", CardHints(), sources)
+    assert await build_event_card("Без публикаций", CardHints(), []) is None
 
 
 async def test_bank_view_is_verified_and_fresh():
@@ -201,7 +203,7 @@ async def test_extract_theses_by_doc():
 
 async def test_rank_judge_stub_is_empty():
     compact = profile_compact(await get_profile("C-DEV-01"), UserRole.cfo)
-    card = await extract_event_card(1)
+    card = next(e.card for e in load_fixture("events.json", TypeAdapter(list[Event])) if e.id == 1)
     result: list[JudgeScore] = await rank_judge(compact, [(1, card)])
     assert result == []
 

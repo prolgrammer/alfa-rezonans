@@ -107,6 +107,7 @@ class ScopeCall:
     cost_rub: float
     cached: bool
     fallback_from: str | None
+    event_id: int | None = None
 
 
 @dataclass
@@ -159,6 +160,10 @@ def llm_scope(
         yield scope
     finally:
         _scope.reset(token)
+
+
+def current_scope() -> Scope | None:
+    return _scope.get()
 
 
 class _Failed(Exception):
@@ -314,6 +319,9 @@ class Gateway:
         )
         req.need_cap = "vision"
         return await self._run(req)
+
+    def prompt_version(self, prompt: str) -> str:
+        return self._prompts.version(prompt)
 
     def strategy(self, task: str) -> Literal["tools", "prefetch"]:
         cfg = self.config.task(task)
@@ -653,7 +661,9 @@ class Gateway:
             scope.tokens_in += row.tokens_in
             scope.tokens_out += row.tokens_out
             scope.calls.append(
-                ScopeCall(row.task, row.model, row.ms, row.cost_rub, row.cached, row.fallback_from)
+                ScopeCall(
+                    row.task, row.model, row.ms, row.cost_rub, row.cached, row.fallback_from, row.event_id
+                )
             )
         await self._store.record(row)
 

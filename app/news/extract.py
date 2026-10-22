@@ -1,14 +1,63 @@
 import asyncio
+import contextlib
+import datetime as dt
+import logging
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
+from decimal import Decimal
 from itertools import batched
 
-from pydantic import BaseModel, TypeAdapter
+from psycopg.types.json import Jsonb
+from pydantic import BaseModel, ValidationError
 
-from app.contracts import Event, EventCard, NewsFilterResult, RawItemIn
-from app.fixtures import load_fixture
-from app.llm import LLMUnavailable, gw
-from app.text.sanitize import Flag, Source, neutralize, render_sources
+from app.catalogs import factor_ids, factor_names, sector_ids, sector_names
+from app.contracts import (
+    CardCause,
+    CardClaim,
+    CardDate,
+    CardFact,
+    CardFactor,
+    CardNumber,
+    CardSector,
+    EventCard,
+    NewsFilterResult,
+    RawItemIn,
+    SourceFragment,
+)
+from app.contracts.enums import (
+    CardStatus,
+    Certainty,
+    EventType,
+    FactorDirection,
+    Horizon,
+    Magnitude,
+    SectorRole,
+)
+from app.db import get_pool
+from app.errors import NotFound
+from app.llm import LLMUnavailable, Scope, current_scope, gw, llm_scope
+from app.news.search import get_event_sources
+from app.text.sanitize import (
+    Flag,
+    Source,
+    Wrapped,
+    neutralize,
+    render_sources,
+    sanitize,
+    strip_marks,
+    wrap_source,
+)
+from app.text.verify import (
+    QUOTE_MIN,
+    date_mentioned,
+    find_quote,
+    numbers,
+    quote_size,
+    show_number,
+    unit_matches,
+)
 
-_EVENTS = TypeAdapter(list[Event])
+log = logging.getLogger(__name__)
 
 FILTER_BATCH = 10  # ML-4: пачка по 10 публикаций на вызов
 # ~400–500 токенов русского текста: укладываемся в 600 токенов на публикацию из ML-4
@@ -131,9 +180,532 @@ async def news_filter(items: list[RawItemIn]) -> list[NewsFilterResult]:
     return [results[index] for index in range(len(items))]
 
 
-# заглушка до ML-5
+# --- карточка события (ML-5) ----------------------------------------------------------------------------
+
+CARD_SOURCES = 5  # ML-5: до 5 публикаций; cites в контракте — от 1 до 5
+CARD_SOURCE_LIMIT = 1500
+CARD_PROMPT = "event_card"
+# сколько ошибок и сколько текста элемента показать модели при перегенерации
+CARD_ERRORS_MAX = 15
+_ERROR_TEXT = 60
+NO_SUMMARY = "Описание события не прошло проверку по источникам."
+
+
+class _DraftFact(BaseModel):
+    text: str
+    cites: list[int]
+    quote: str
+
+
+class _DraftClaim(BaseModel):
+    text: str
+    who: str
+    cites: list[int]
+    quote: str
+
+
+class _DraftDate(BaseModel):
+    what: str
+    date: str
+
+
+class _DraftNumber(BaseModel):
+    what: str
+    value: float
+    unit: str
+    quote: str
+
+
+class _DraftCause(BaseModel):
+    text: str
+    cites: list[int]
+
+
+class _DraftFactor(BaseModel):
+    id: str
+    direction: FactorDirection
+    magnitude: Magnitude
+    quote: str
+
+
+class _DraftSector(BaseModel):
+    id: str
+    role: SectorRole
+
+
+class CardDraft(BaseModel):
+    """Ответ модели: поля EventCard без ограничений длины, id каталогов — строкой.
+
+    Длины и id проверяет код: иначе одна длинная строка или неверный id роняли бы весь ответ,
+    а не один элемент. Закрытые списки — перечислениями: их держит строгая схема ответа.
+    """
+
+    summary: str
+    facts: list[_DraftFact]
+    claims: list[_DraftClaim]
+    actors: list[str]
+    dates: list[_DraftDate]
+    numbers: list[_DraftNumber]
+    causes: list[_DraftCause]
+    event_type: EventType
+    factors: list[_DraftFactor]
+    sectors: list[_DraftSector]
+    regions: list[str]
+    horizon: Horizon
+    certainty: Certainty
+
+
+@dataclass(frozen=True)
+class CardHints:
+    factors: tuple[str, ...] = ()
+    sectors: tuple[str, ...] = ()
+    # сильные сигналы: факторы, которые словари нашли в заголовке события
+    strong: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class BuiltCard:
+    card: EventCard
+    model: str
+    retried: bool
+    # что проверка удалила или заменила в принятом ответе
+    removed: tuple[str, ...]
+
+
+# заглушка до B2 роли 3: факторы, которые тегер словарей нашёл в заголовке события
+async def title_factors(title: str) -> frozenset[str]:
+    return frozenset()
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if space >= limit * 0.6:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:") + "…"
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text.endswith((".", "!", "?", "…")) else text + "."
+
+
+def _texts(items: list[str], limit: int, count: int) -> list[str]:
+    cleaned = (_clip(item, limit) for item in items)
+    return list(dict.fromkeys(item for item in cleaned if item))[:count]
+
+
+@dataclass
+class _Checked:
+    summary: str = ""
+    summary_ok: bool = True
+    facts: list[CardFact] = field(default_factory=list)
+    claims: list[CardClaim] = field(default_factory=list)
+    dates: list[CardDate] = field(default_factory=list)
+    numbers: list[CardNumber] = field(default_factory=list)
+    causes: list[CardCause] = field(default_factory=list)
+    factors: list[CardFactor] = field(default_factory=list)
+    sectors: list[CardSector] = field(default_factory=list)
+    # факторы из каталога, у которых не нашлась цитата: сильный сигнал из них спасается
+    unquoted: list[_DraftFactor] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+class _Checker:
+    def __init__(self, shown: Mapping[int, str]) -> None:
+        self.shown = shown
+        # пометки санитайзера («[base64 опущен: 1234 символов]») — не числа источника
+        self.numbers = {n: numbers(strip_marks(text)) for n, text in shown.items()}
+        self.all_numbers: set[Decimal] = set().union(*self.numbers.values())
+        self.out = _Checked()
+
+    def fail(self, label: str, text: str, problem: str) -> None:
+        self.out.errors.append(f"{label} «{_clip(text, _ERROR_TEXT)}»: {problem}")
+
+    def quoted(
+        self, label: str, text: str, cites: list[int], quote: str, *, min_size: int = QUOTE_MIN
+    ) -> list[int] | None:
+        """Номера источников элемента или None, если цитаты нет.
+
+        Номер вне показанных отбрасывается; источник, где цитата нашлась, добавляется: где она стоит,
+        код знает точнее модели.
+        """
+        if quote_size(quote) < min_size:
+            self.fail(label, text, f"цитата короче {min_size} символов: приведи фразу из источника целиком")
+            return None
+        found = find_quote(quote, self.shown, min_size=min_size)
+        if not found:
+            self.fail(label, text, f"цитаты «{_clip(quote, _ERROR_TEXT)}» нет дословно ни в одном источнике")
+            return None
+        # первым — источник, где цитата стоит: его подсветит интерфейс
+        return sorted(found) + [n for n in dict.fromkeys(cites) if n in self.shown and n not in found]
+
+    def filled(self, label: str, text: str, quote: str | None = None) -> bool:
+        if not text:
+            self.fail(label, quote or "", "пустой текст элемента")
+            return False
+        return True
+
+    def numbers_ok(self, label: str, text: str, cites: list[int] | None) -> bool:
+        allowed = self.all_numbers if cites is None else set().union(*(self.numbers[n] for n in cites))
+        missing = numbers(text) - allowed
+        if missing:
+            where = "в источниках" if cites is None else f"в источниках {', '.join(map(str, cites))}"
+            self.fail(label, text, f"чисел {', '.join(sorted(map(show_number, missing)))} нет {where}")
+            return False
+        return True
+
+
+def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
+    c = _Checker(shown)
+    out = c.out
+    # числа сверяются в том виде, в каком текст попадёт в карточку: обрезка могла бы задеть число
+    out.summary = _clip(draft.summary, 600)
+    if not out.summary:
+        out.summary_ok = False
+        out.errors.append("summary: пустая сводка")
+    else:
+        out.summary_ok = c.numbers_ok("summary", out.summary, None)
+    for i, fact in enumerate(draft.facts):
+        label, text = f"facts[{i}]", _clip(fact.text, 400)
+        if not c.filled(label, text, fact.quote):
+            continue
+        cites = c.quoted(label, text, fact.cites, fact.quote)
+        if cites is not None and c.numbers_ok(label, text, cites):
+            out.facts.append(CardFact(text=text, cites=cites, quote=_clip(fact.quote, 500)))
+    for i, claim in enumerate(draft.claims):
+        label, text = f"claims[{i}]", _clip(claim.text, 400)
+        if not c.filled(label, text, claim.quote):
+            continue
+        if not claim.who.strip():
+            c.fail(label, text, "не сказано, чьё это мнение (who)")
+            continue
+        cites = c.quoted(label, text, claim.cites, claim.quote)
+        if cites is not None and c.numbers_ok(label, text, cites):
+            out.claims.append(
+                CardClaim(text=text, who=_clip(claim.who, 120), cites=cites, quote=_clip(claim.quote, 500))
+            )
+    for i, number in enumerate(draft.numbers):
+        label, what = f"numbers[{i}]", _clip(number.what, 120)
+        if not c.filled(label, what, number.quote):
+            continue
+        # у числа цитата может быть короткой («11,92 ₽»): значение сверяется с ней с учётом масштаба,
+        # а сама цитата ищется только целыми числами — «4%» не найдётся внутри «14%»
+        cites = c.quoted(label, what, [], number.quote, min_size=1)
+        if cites is None:
+            continue
+        value = abs(Decimal(repr(number.value)))
+        unit = _clip(number.unit, 20)
+        # и отдельным числом в источнике цитаты — вторая защита к поиску по границам чисел
+        in_source = value in set().union(*(c.numbers[n] for n in cites))
+        if not in_source or not unit_matches(value, unit, number.quote):
+            c.fail(label, what, f"значения {show_number(value)} {unit} нет в цитате")
+            continue
+        out.numbers.append(
+            CardNumber(what=what, value=number.value, unit=unit, quote=_clip(number.quote, 500))
+        )
+    for i, cause in enumerate(draft.causes):
+        label, text = f"causes[{i}]", _clip(cause.text, 400)
+        if not c.filled(label, text):
+            continue
+        cites = [n for n in dict.fromkeys(cause.cites) if n in shown]
+        if not cites:
+            c.fail(label, text, "нет номера показанного источника (cites)")
+        elif c.numbers_ok(label, text, cites):
+            out.causes.append(CardCause(text=text, cites=cites))
+    for i, item in enumerate(draft.dates):
+        label = f"dates[{i}]"
+        try:
+            date = dt.date.fromisoformat(item.date)
+        except ValueError:
+            c.fail(label, item.what, f"дата «{_clip(item.date, 20)}» не в виде ГГГГ-ММ-ДД")
+            continue
+        if not any(date_mentioned(date, text) for text in shown.values()):
+            c.fail(label, item.what, f"дня и месяца даты {date.isoformat()} нет в источниках")
+            continue
+        out.dates.append(CardDate(what=_clip(item.what, 120), date=date))
+    known_factors = factor_ids()
+    seen: set[str] = set()
+    for i, factor in enumerate(draft.factors):
+        label = f"factors[{i}]"
+        if factor.id not in known_factors:
+            c.fail(label, factor.id, "такого id нет в каталоге факторов")
+            continue
+        if factor.id in seen:
+            continue
+        # id занят только проверенным элементом: повтор с верной цитатой заменит первый с плохой
+        if c.quoted(label, factor.id, [], factor.quote) is None:
+            out.unquoted.append(factor)
+            continue
+        seen.add(factor.id)
+        out.factors.append(
+            CardFactor(
+                id=factor.id,
+                direction=factor.direction,
+                magnitude=factor.magnitude,
+                quote=_clip(factor.quote, 500),
+            )
+        )
+    known_sectors = sector_ids()
+    seen = set()
+    for i, sector in enumerate(draft.sectors):
+        if sector.id not in known_sectors:
+            c.fail(f"sectors[{i}]", sector.id, "такого id нет в каталоге отраслей")
+        elif sector.id not in seen:
+            seen.add(sector.id)
+            out.sectors.append(CardSector(id=sector.id, role=sector.role))
+    return out
+
+
+def _strong_first(checked: _Checked, title: str, strong: frozenset[str]) -> list[CardFactor]:
+    """Сильный сигнал словарей модель не перебивает: фактор из заголовка остаётся в карточке."""
+    have = {f.id for f in checked.factors}
+    rescued: list[CardFactor] = []
+    for factor in checked.unquoted:
+        if factor.id in strong and factor.id not in have:
+            have.add(factor.id)
+            rescued.append(
+                CardFactor(
+                    id=factor.id,
+                    direction=factor.direction,
+                    magnitude=factor.magnitude,
+                    quote=_clip(title, 500),
+                )
+            )
+    for factor_id in sorted(strong - have):
+        rescued.append(
+            CardFactor(
+                id=factor_id,
+                direction=FactorDirection.unclear,
+                magnitude=Magnitude.medium,
+                quote=_clip(title, 500),
+            )
+        )
+    factors = checked.factors + rescued
+    return [f for f in factors if f.id in strong] + [f for f in factors if f.id not in strong]
+
+
+def _assemble(draft: CardDraft, checked: _Checked, title: str, strong: frozenset[str]) -> EventCard:
+    if checked.summary_ok:
+        summary = checked.summary
+    else:
+        # заголовок может опустеть после санитайзера, а сводка обязательна по контракту
+        summary = " ".join(_sentence(f.text) for f in checked.facts[:2]) or title or NO_SUMMARY
+    return EventCard(
+        summary=_clip(summary, 600),
+        facts=checked.facts[:10],
+        claims=checked.claims[:10],
+        actors=_texts(draft.actors, 120, 15),
+        dates=checked.dates[:10],
+        numbers=checked.numbers[:15],
+        causes=checked.causes[:5],
+        event_type=draft.event_type,
+        factors=_strong_first(checked, title, strong)[:8],
+        sectors=checked.sectors[:10],
+        regions=_texts(draft.regions, 60, 10),
+        horizon=draft.horizon,
+        certainty=draft.certainty,
+    )
+
+
+def _source_attrs(fragment: SourceFragment) -> dict[str, str]:
+    attrs = {"source": fragment.source_name, "date": fragment.published_at.date().isoformat()}
+    if fragment.is_official:
+        attrs["official"] = "да"
+    return attrs
+
+
+def _shown_text(block: Wrapped) -> str:
+    # текст источника в том виде, какой видела модель: между строкой <source …> и </source>
+    _, _, rest = block.text.partition("\n")
+    return rest.removesuffix("</source>").removesuffix("\n")
+
+
+@contextlib.contextmanager
+def _card_scope(event_id: int | None) -> Iterator[Scope]:
+    # своя область — только если вызывающий не открыл свою: иначе расход ушёл бы мимо его лимита
+    scope = current_scope()
+    if scope is not None:
+        yield scope
+        return
+    with llm_scope(event_id=event_id) as scope:
+        yield scope
+
+
+def _answer_model(scope: Scope, start: int, event_id: int | None) -> str | None:
+    # во внешней области параллельно могут идти карточки других событий: берём вызов своего
+    return next(
+        (
+            c.model
+            for c in reversed(scope.calls[start:])
+            if c.task == "event_card" and (event_id is None or c.event_id == event_id)
+        ),
+        None,
+    )
+
+
+async def build_event_card(
+    title: str, hints: CardHints, sources: Sequence[SourceFragment], *, event_id: int | None = None
+) -> BuiltCard | None:
+    """Карточка по публикациям события без БД. None — публикаций нет; сбой LLM поднимается наружу."""
+    picked: dict[int, SourceFragment] = {}
+    for fragment in sorted(sources, key=lambda s: s.n):
+        if fragment.n <= CARD_SOURCES and fragment.text.strip():
+            picked.setdefault(fragment.n, fragment)
+    if not picked:
+        return None
+    blocks = [
+        wrap_source(n, fragment.text, limit=CARD_SOURCE_LIMIT, **_source_attrs(fragment))
+        for n, fragment in picked.items()
+    ]
+    shown = {int(block.n): _shown_text(block) for block in blocks}
+    title = sanitize(title)
+    factors, sectors = factor_names(), sector_names()
+    strong = frozenset(f for f in hints.strong if f in factors)
+    variables = {
+        "title": neutralize(title).text,
+        "count": len(blocks),
+        "sources": "\n\n".join(block.text for block in blocks),
+        "factors_catalog": list(factors.items()),
+        "sectors_catalog": list(sectors.items()),
+        "hint_factors": [(f, factors[f]) for f in dict.fromkeys(hints.factors) if f in factors],
+        "hint_sectors": [(s, sectors[s]) for s in dict.fromkeys(hints.sectors) if s in sectors],
+        "strong_factors": [(f, factors[f]) for f in sorted(strong)],
+        "errors": [],
+    }
+    with _card_scope(event_id) as scope:
+        start = len(scope.calls)
+        draft = await gw.json("event_card", CARD_PROMPT, variables, CardDraft, event_id=event_id)
+        model = _answer_model(scope, start, event_id)
+        checked = _check(draft, shown)
+        retried = bool(checked.errors)
+        if retried:
+            # одна перегенерация со списком ошибок; что не прошло и во второй раз, удаляется
+            try:
+                start = len(scope.calls)
+                # в ошибках — куски ответа модели, а он мог повторить текст источника: обезвреживаем так же
+                errors = [neutralize(e).text for e in checked.errors[:CARD_ERRORS_MAX]]
+                second = await gw.json(
+                    "event_card",
+                    CARD_PROMPT,
+                    variables | {"errors": errors},
+                    CardDraft,
+                    event_id=event_id,
+                )
+            except LLMUnavailable as error:
+                log.info(
+                    "карточка события %s: перегенерация не удалась, берём первый ответ: %s", event_id, error
+                )
+            else:
+                draft, checked, model = second, _check(second, shown), _answer_model(scope, start, event_id)
+    card = _assemble(draft, checked, title, strong)
+    model = model or gw.config.task("event_card").model or ""
+    return BuiltCard(card=card, model=model, retried=retried, removed=tuple(checked.errors))
+
+
+@dataclass
+class _EventLock:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
+
+
+_card_locks: dict[int, _EventLock] = {}
+
+
+def _stored_card(event_id: int, raw: object) -> EventCard | None:
+    if raw is None:
+        return None
+    try:
+        return EventCard.model_validate(raw)
+    except ValidationError:
+        log.warning("карточка события %s не проходит текущий контракт: строим заново", event_id)
+        return None
+
+
+def _card_key(version: str, model: str, source_count: int) -> str:
+    return f"{version}|{model}|{source_count}"
+
+
+def _key_matches(key: str | None, version: str, source_count: int) -> bool:
+    if not key:
+        return False
+    parts = key.split("|")
+    cfg = gw.config.task("event_card")
+    return (
+        len(parts) == 3
+        and parts[0] == version
+        and parts[1] in {cfg.model, *cfg.fallback}
+        and parts[2] == str(source_count)
+    )
+
+
+async def _save_card(event_id: int, card: EventCard | None, status: CardStatus, key: str | None) -> None:
+    payload = None if card is None else Jsonb(card.model_dump(mode="json"))
+    async with (await get_pool()).connection() as conn:
+        await conn.execute(
+            "UPDATE events SET card = %s, card_status = %s, card_key = %s WHERE id = %s",
+            (payload, status.value, key, event_id),
+        )
+
+
 async def extract_event_card(event_id: int) -> EventCard | None:
-    for event in load_fixture("events.json", _EVENTS):
-        if event.id == event_id:
-            return event.card
-    return None
+    # одно событие одновременно строится один раз: второй вызов дождётся первого и возьмёт его кэш
+    entry = _card_locks.setdefault(event_id, _EventLock())
+    entry.users += 1
+    try:
+        async with entry.lock:
+            return await _extract_event_card(event_id)
+    finally:
+        # замок нужен, только пока событие строится или его ждут: иначе словарь рос бы весь век процесса
+        entry.users -= 1
+        if not entry.users:
+            del _card_locks[event_id]
+
+
+async def _extract_event_card(event_id: int) -> EventCard | None:
+    async with (await get_pool()).connection() as conn:
+        cursor = await conn.execute(
+            "SELECT title, source_count, factors, sectors, card, card_key FROM events WHERE id = %s",
+            (event_id,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+    previous = _stored_card(event_id, row["card"])
+    version = gw.prompt_version(CARD_PROMPT)
+    if previous is not None and _key_matches(row["card_key"], version, row["source_count"]):
+        return previous
+    if previous is None:
+        await _save_card(event_id, None, CardStatus.pending, None)
+    try:
+        try:
+            sources = await get_event_sources(event_id)
+        except NotFound:
+            sources = []
+        hints = CardHints(
+            factors=tuple(row["factors"]),
+            sectors=tuple(row["sectors"]),
+            strong=await title_factors(row["title"]),
+        )
+        built = await build_event_card(row["title"], hints, sources, event_id=event_id)
+    except LLMUnavailable as error:
+        log.warning("карточка события %s: модель недоступна (%s)", event_id, error)
+        built = None
+    except BaseException:
+        # ошибка кода или отмена задачи, а не сбой модели: статус не должен навсегда остаться pending.
+        # Запись защищена от повторной отмены, а её собственный сбой не заслоняет исходную причину.
+        if previous is None:
+            with contextlib.suppress(Exception):
+                await asyncio.shield(_save_card(event_id, None, CardStatus.failed, None))
+        raise
+    if built is None:
+        if previous is None:
+            await _save_card(event_id, None, CardStatus.failed, None)
+        # прежняя карточка остаётся с прежним ключом: следующий проход конвейера попробует снова
+        return previous
+    key = _card_key(version, built.model, row["source_count"])
+    await _save_card(event_id, built.card, CardStatus.ok, key)
+    return built.card
