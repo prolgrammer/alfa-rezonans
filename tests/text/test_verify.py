@@ -6,6 +6,7 @@ from app.text.verify import (
     clip,
     date_mentioned,
     find_quote,
+    mark_in,
     normalize,
     number_marks,
     numbers,
@@ -141,15 +142,15 @@ def test_percentage_point_is_not_percent():
 
 def test_number_marks_keep_scale_and_percent():
     assert number_marks("выручка 1,5 миллиарда рублей, рост 7% к 2025 году") == {
-        (Decimal("1.5"), "млрд", False),
-        (Decimal(7), None, True),
-        (Decimal(2025), None, False),
+        (Decimal("1.5"), "млрд", "rub"),
+        (Decimal(7), None, "%"),
+        (Decimal(2025), None, None),
     }
-    rub = {(Decimal("11.5"), None, False), (Decimal("12.5"), None, False)}
+    rub = {(Decimal("11.5"), None, "rub"), (Decimal("12.5"), None, "rub")}
     assert number_marks("курс 11,5–12,5 ₽") == rub
-    assert number_marks("инфляция 6,0-6,5%") == {(Decimal("6.0"), None, True), (Decimal("6.5"), None, True)}
+    assert number_marks("инфляция 6,0-6,5%") == {(Decimal("6.0"), None, "%"), (Decimal("6.5"), None, "%")}
     # 14 и 14,0 — одно значение
-    assert (Decimal(14), None, True) in number_marks("ставка 14,0%")
+    assert (Decimal(14), None, "%") in number_marks("ставка 14,0%")
     assert number_marks("без чисел") == set()
 
 
@@ -194,3 +195,54 @@ def test_full_scale_words_and_percent_both_ways():
 
 def test_decimal_with_word_percent_is_not_a_date():
     assert not date_mentioned(dt.date(2026, 5, 1), "рост 1.5 процента")
+
+
+def test_unit_kinds_are_parsed():
+    assert number_marks("на 2 процентных пункта") == {(Decimal(2), None, "pp")}
+    assert number_marks("на 2 п.п. и 3 п. п.") == {(Decimal(2), None, "pp"), (Decimal(3), None, "pp")}
+    assert number_marks("на 25 б.п.") == {(Decimal(25), None, "bp")}
+    assert number_marks("25 базисных пунктов") == {(Decimal(25), None, "bp")}
+    assert number_marks("90 $, 5 долларов") == {(Decimal(90), None, "usd"), (Decimal(5), None, "usd")}
+    assert number_marks("3 евро и 4 €") == {(Decimal(3), None, "eur"), (Decimal(4), None, "eur")}
+    assert number_marks("7 юаней") == {(Decimal(7), None, "cny")}
+    assert number_marks("рост в 2 раза") == {(Decimal(2), None, "times")}
+    assert number_marks("1,5 млрд руб. и 2 тыс. руб.") == {
+        (Decimal("1.5"), "млрд", "rub"),
+        (Decimal(2), "тыс", "rub"),
+    }
+    # «размер» — не «раз»
+    assert number_marks("2 размера") == {(Decimal(2), None, None)}
+
+
+def test_currency_must_match_when_given():
+    assert not unit_matches(Decimal("1.5"), "млрд ₽", "1,5 млрд долларов")
+    assert not unit_matches(Decimal(90), "₽", "курс 90 $")
+    assert unit_matches(Decimal(90), "", "курс 90 $")
+    assert mark_in((Decimal("1.5"), "млрд", None), number_marks("выручка 1,5 млрд руб."))
+    assert not mark_in((Decimal("1.5"), "млрд", "rub"), number_marks("выручка 1,5 млрд"))
+
+
+def test_percent_point_basis_point_and_times_are_strict_both_ways():
+    two_times, two_pp = number_marks("в 2 раза"), number_marks("на 2 п.п.")
+    assert not mark_in((Decimal(2), None, "pp"), two_times)
+    assert not mark_in((Decimal(2), None, "times"), two_pp)
+    assert not mark_in((Decimal(2), None, None), number_marks("на 2%"))
+    assert not mark_in((Decimal(2), None, None), two_pp)
+    assert not mark_in((Decimal(2), None, "bp"), two_pp)
+    assert mark_in((Decimal(2), None, None), two_times)
+
+
+def test_range_tail_is_not_applied_to_year():
+    marks = number_marks("Инфляция: 2025 — 6,5%, 2026 — 4,0%")
+    assert marks == {
+        (Decimal(2025), None, None),
+        (Decimal(2026), None, None),
+        (Decimal("6.5"), None, "%"),
+        (Decimal("4.0"), None, "%"),
+    }
+    assert number_marks("рост 3–5%") == {(Decimal(3), None, "%"), (Decimal(5), None, "%")}
+
+
+def test_sign_is_not_checked():
+    # известное ограничение: знак проверяет вычитка, «снизится на 2%» и «−2%» — одно и то же
+    assert unit_matches(Decimal(2), "%", "ВВП: -2%")

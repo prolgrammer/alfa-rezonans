@@ -309,3 +309,67 @@ async def test_fixture_documents_have_chunks():
     for doc_id in {c.doc_id for c in chunks}:
         assert await doc_chunks(doc_id)
     assert await doc_chunks(999) == []
+
+
+async def test_quote_over_limit_is_rejected_not_clipped(fake):
+    filler = " ".join(["показатель"] * 54)
+    quote = f"{filler} 1 500 млн рублей"
+    assert 600 < len(quote) < 620
+    item = thesis(text="Выручка составит 1 500 млн рублей.", quote=quote, page=1)
+    gateway = fake(answer(item), answer())
+    built = await build_theses(TITLE, DATE, [chunk(1, f"Итоги. {quote} по итогам года.")])
+    assert built.theses == ()
+    assert "цитата длиннее 600 символов" in gateway.prompts[1]
+
+
+async def check_page(fake, page: str, text: str, quote: str):
+    gateway = fake(answer(thesis(text=text, quote=quote, page=1)), answer())
+    built = await build_theses(TITLE, DATE, [chunk(1, page)])
+    return built, gateway
+
+
+async def test_currency_and_unit_kind_must_match_quote(fake):
+    page = "Выручка составит 1,5 млрд долларов. Ставка снизится в 2 раза."
+    built, gateway = await check_page(
+        fake, page, "Выручка составит 1,5 млрд рублей.", "Выручка составит 1,5 млрд долларов"
+    )
+    assert built.theses == () and "нет в цитате" in gateway.prompts[1]
+    built, gateway = await check_page(fake, page, "Ставка снизится на 2 п.п.", "Ставка снизится в 2 раза")
+    assert built.theses == () and "нет в цитате" in gateway.prompts[1]
+
+
+async def test_text_without_currency_passes_against_quote_with_currency(fake):
+    built, gateway = await check_page(
+        fake,
+        "Выручка составит 1,5 млрд руб. по итогам.",
+        "Выручка 1,5 млрд.",
+        "Выручка составит 1,5 млрд руб.",
+    )
+    assert len(built.theses) == 1 and len(gateway.prompts) == 1
+
+
+async def test_year_in_forecast_table_has_no_percent(fake):
+    page = "Прогноз. Инфляция: 2025 — 6,5%, 2026 — 4,0%. Источник: ЦБ."
+    quote = "Инфляция: 2025 — 6,5%, 2026 — 4,0%"
+    built, gateway = await check_page(fake, page, "Инфляция в 2026 году 4%.", quote)
+    assert len(built.theses) == 1 and len(gateway.prompts) == 1
+
+
+async def test_correction_with_new_quote_replaces_clipped_original(fake):
+    soft = rate_hold(factors=["key_rate", "no_such"])
+    fixed = rate_hold() | {
+        "text": "Банк отмечает: ставка оставлена на 14,0%, тон ЦБ ужесточился.",
+        "quote": "ставка без изменения на 14,0%",
+    }
+    fake(answer(soft), answer(fixed))
+    built = await build_theses(TITLE, DATE, await doc1())
+    assert [t.text for t in built.theses] == [fixed["text"]]
+
+
+async def test_repeat_of_accepted_thesis_does_not_take_correction_slot(fake):
+    bad = thesis(quote="такой фразы в документе нет совсем")
+    fixed = thesis(text="Ставка снизится не раньше 2027 года.")
+    fake(answer(rate_hold(), bad), answer(rate_hold(), fixed))
+    built = await build_theses(TITLE, DATE, await doc1())
+    assert [t.text for t in built.theses] == [rate_hold()["text"], fixed["text"]]
+    assert built.removed == ()

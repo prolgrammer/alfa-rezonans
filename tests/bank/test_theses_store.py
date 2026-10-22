@@ -262,6 +262,32 @@ async def test_review_csv_round_trip(db, fake, tmp_path):
 async def test_estimate_without_calls(db):
     estimates = dict(await estimate_theses([1, 4]))
     assert set(estimates) == {1, 4}
-    # промпт с каталогом факторов и 6000 токенов ответа по цене DeepSeek
-    assert all(2.5 < rub < 6 for rub in estimates.values())
+    # промпт с каталогом факторов и 6000 токенов ответа по цене DeepSeek, дважды: вызов и перегенерация
+    assert all(5 < rub < 12 for rub in estimates.values())
     assert await rows(db) == []
+
+
+async def test_empty_answer_does_not_erase_previous(db, fake):
+    fake(answer(HOLD, RATE))
+    first = await extract_theses(1)
+    fake(answer())
+    assert await extract_theses(1, force=True) == first
+    assert len(await rows(db)) == 2
+
+
+async def test_verified_thesis_missing_from_new_set_is_kept(db, fake):
+    fake(answer(HOLD, RATE))
+    await extract_theses(1)
+    hold_id, _ = (r["id"] for r in await rows(db))
+    await set_verified(hold_id, True)
+    changed = RATE | {"text": "Снижение ставки — не раньше начала 2027 года."}
+    fake(answer(changed), version="bank_theses@2")
+    result = await extract_theses(1, force=True)
+    assert len(result) == 2
+    saved = await rows(db)
+    # прежний RATE не вычитан и ушёл; вычитанный HOLD остался с новой версией
+    assert [(r["payload"]["quote"], r["verified"]) for r in saved] == [
+        (RATE["quote"], None),
+        (HOLD["quote"], True),
+    ]
+    assert {r["prompt_version"] for r in saved} == {"bank_theses@2"}

@@ -29,6 +29,7 @@ from app.text.verify import (
     NumberMark,
     clip,
     find_quote,
+    mark_in,
     normalize,
     number_marks,
     quote_size,
@@ -40,6 +41,7 @@ log = logging.getLogger(__name__)
 
 PROMPT = "bank_theses"
 THESES_MAX = 20
+QUOTE_MAX = 600
 FACTORS_MAX = 5  # BankThesis.factors — до 5
 # ~2 тыс. токенов на страницу и ~80 тыс. на документ: аналитическая записка банка укладывается целиком,
 # а случайно загруженный годовой отчёт не съест суточный бюджет одним вызовом
@@ -101,9 +103,21 @@ class BuiltTheses:
     removed: tuple[str, ...]
 
 
+_UNIT_LABELS = {
+    "%": "%",
+    "pp": "п. п.",
+    "bp": "б. п.",
+    "rub": "₽",
+    "usd": "$",
+    "eur": "€",
+    "cny": "¥",
+    "times": "раз",
+}
+
+
 def _show_mark(mark: NumberMark) -> str:
-    value, scale, percent = mark
-    return show_number(value) + (f" {scale}" if scale else "") + ("%" if percent else "")
+    value, scale, unit = mark
+    return show_number(value) + (f" {scale}" if scale else "") + (f" {_UNIT_LABELS[unit]}" if unit else "")
 
 
 def _check(draft: _DraftThesis, shown: Mapping[int, str], known: frozenset[str]) -> _Checked:
@@ -124,13 +138,15 @@ def _check(draft: _DraftThesis, shown: Mapping[int, str], known: frozenset[str])
         return rejected(f"цитаты «{clip(draft.quote, _ERROR_TEXT)}» нет дословно ни на одной странице")
     # где стоит цитата, код знает точнее модели: интерфейс откроет именно эту страницу
     page = draft.page if draft.page in found else min(found)
-    # числа сверяются с той цитатой, что попадёт в тезис: обрезка могла бы задеть число
-    quote = clip(draft.quote, 600)
+    # обрезка могла бы разрезать число цитаты («1 500 млн» → «1…»), поэтому длинную цитату отклоняем
+    quote = " ".join(draft.quote.split())
+    if len(quote) > QUOTE_MAX:
+        return rejected(f"цитата длиннее {QUOTE_MAX} символов: возьми фразу короче")
     in_quote = number_marks(quote)
-    missing = number_marks(text) - in_quote
+    missing = [m for m in number_marks(text) if not mark_in(m, in_quote)]
     if missing:
         listed = ", ".join(sorted(map(_show_mark, missing)))
-        return rejected(f"чисел {listed} нет в цитате в том же виде (масштаб, %)")
+        return rejected(f"чисел {listed} нет в цитате в том же виде (масштаб, единица)")
     errors: list[str] = []
     factors: list[str] = []
     for factor in draft.factors:
@@ -252,6 +268,8 @@ async def build_theses(
             collected.add(checked.thesis)
     failed = [c for c in first if c.errors]
     removed: list[str] = []
+    # k-й ответ перегенерации исправляет k-й провалившийся; принятое исправление заменяет его оригинал
+    fixed: set[int] = set()
     if failed:
         # одна перегенерация — только провалившихся тезисов; принятые не пересылаются и не теряются
         try:
@@ -265,20 +283,25 @@ async def build_theses(
             log.info("документ %s: перегенерация тезисов не удалась, берём проверенное: %s", doc_id, error)
             removed.extend(e for c in failed for e in c.errors)
         else:
+            # повтор уже принятого тезиса — не исправление: он не должен занимать слот исправления
+            accepted = {_key(t) for t in collected.theses}
+            answers = [_check(d, prepared.shown, known) for d in retry.theses[:THESES_MAX]]
+            answers = [a for a in answers if a.thesis is None or _key(a.thesis) not in accepted]
             # лишнее сверх числа провалившихся — не исправление, а новые тезисы без первой проверки
-            second = [_check(d, prepared.shown, known) for d in retry.theses[: len(failed)]]
-            for checked in second:
+            second = answers[: len(failed)]
+            for k, checked in enumerate(second):
                 if checked.thesis is not None:
                     collected.add(checked.thesis)
+                    fixed.add(k)
                 removed.extend(checked.errors)
             if len(second) < len(failed):
                 removed.append(
                     f"перегенерация вернула {len(second)} из {len(failed)} тезисов, остальные не исправлены"
                 )
-    for checked in failed:
+    for k, checked in enumerate(failed):
         # без лишних чисел и неизвестных факторов тезис первого ответа проверен; модель могла его
         # пропустить при перегенерации или не ответить — тогда остаётся он
-        if checked.thesis is not None:
+        if k not in fixed and checked.thesis is not None:
             collected.add(checked.thesis)
     return BuiltTheses(tuple(collected.theses[:THESES_MAX]), retried=bool(failed), removed=tuple(removed))
 
@@ -306,6 +329,8 @@ class _DocLock:
 
 
 _doc_locks: dict[int, _DocLock] = {}
+# пространство ключей advisory-замков этого модуля: чужие замки на тот же doc_id не пересекутся
+_LOCK_SPACE = 9
 
 
 @contextlib.asynccontextmanager
@@ -355,12 +380,24 @@ async def _replace(
     published_on: dt.date,
     version: str,
     previous: Sequence[_Stored],
-) -> None:
+) -> list[BankThesis]:
+    """Заменяет тезисы документа; возвращает вычитанные, которых нет в новом наборе, — они сохранены."""
     # отметка вычитки переносится, только если человек проверял то же утверждение с той же цитатой
     marks = {_key(s.thesis): s.verified for s in previous if s.verified is not None}
+    new_keys = {_key(t) for t in theses}
+    # вычитку делали люди: набор, который её не повторил, не должен её стереть
+    kept = [s.thesis for s in previous if s.verified is True and _key(s.thesis) not in new_keys]
+    if kept:
+        log.info(
+            "тезисы документа %s: сохранено вычитанных тезисов, которых нет в новом наборе: %s",
+            doc_id,
+            len(kept),
+        )
     async with (await get_pool()).connection() as conn, conn.transaction():
+        # замок на документ между процессами (CLI и worker): без него оба DELETE не увидят вставок друг друга
+        await conn.execute("SELECT pg_advisory_xact_lock(%s, %s::int)", (_LOCK_SPACE, doc_id & 0x7FFFFFFF))
         await conn.execute("DELETE FROM bank_theses WHERE doc_id = %s", (doc_id,))
-        for thesis in theses:
+        for thesis in [*theses, *kept]:
             await conn.execute(
                 "INSERT INTO bank_theses (doc_id, page, payload, factors, kind, published_on, verified, "
                 "prompt_version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -375,6 +412,7 @@ async def _replace(
                     version,
                 ),
             )
+    return kept
 
 
 async def extract_theses(doc_id: int, *, force: bool = False) -> list[BankThesis]:
@@ -401,8 +439,11 @@ async def extract_theses(doc_id: int, *, force: bool = False) -> list[BankThesis
             log.info(
                 "тезисы документа %s: проверка удалила %s: %s", doc_id, len(built.removed), built.removed
             )
-        await _replace(doc_id, built.theses, doc.published_on, version, previous)
-        return list(built.theses)
+        if not built.theses and previous:
+            log.warning("тезисы документа %s: новый набор пуст, прежние тезисы оставлены", doc_id)
+            return [s.thesis for s in previous]
+        kept = await _replace(doc_id, built.theses, doc.published_on, version, previous)
+        return [*built.theses, *kept]
 
 
 # --- позиция банка и вычитка -------------------------------------------------------------------------------
@@ -567,12 +608,15 @@ def read_review_file(path: Path) -> str:
 
 
 async def estimate_theses(doc_ids: Sequence[int]) -> list[tuple[int, float]]:
-    """Верхняя оценка прогона в рублях по документам — один вызов основной модели, без перегенерации."""
+    """Оценка прогона в рублях по документам: вызов и перегенерация полным документом — два вызова
+    основной модели. Повтор при невалидном JSON и цена резервной модели не входят."""
     estimates = []
     for doc_id in doc_ids:
         doc = await _doc(doc_id)
         prepared = _prepare(doc.title, doc.published_on, await doc_chunks(doc_id))
-        rub = 0.0 if prepared is None else gw.estimate_json(PROMPT, PROMPT, prepared.variables, ThesesDraft)
+        rub = (
+            0.0 if prepared is None else 2 * gw.estimate_json(PROMPT, PROMPT, prepared.variables, ThesesDraft)
+        )
         estimates.append((doc_id, rub))
     return estimates
 
