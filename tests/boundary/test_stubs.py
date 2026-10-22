@@ -207,7 +207,9 @@ async def test_rank_judge_stub_is_empty():
     assert result == []
 
 
-async def test_run_insight_sequence(no_delay):
+async def test_run_insight_sequence(no_delay, monkeypatch):
+    # без ключа разбор краткий; позиция банка — из фикстуры, чтобы тест не ходил в БД
+    monkeypatch.setattr(run, "_bank_view", fixture_bank_view)
     items = [x async for x in run_insight(DEV, 1)]
     *steps, last = items
     assert steps and all(isinstance(s, AgentStep) for s in steps)
