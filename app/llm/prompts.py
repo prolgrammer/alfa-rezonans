@@ -34,8 +34,8 @@ class Prompts:
             keep_trailing_newline=False,
         )
 
-    def render(self, name: str, variables: Mapping[str, Any]) -> tuple[str, str]:
-        """Текст промпта без шапки и версия вида `<имя>@<version>`."""
+    def version(self, name: str) -> str:
+        """Версия вида `<имя>@<version>` из шапки промпта."""
         path = self._dir / f"{name}.md"
         if not path.is_file():
             raise jinja2.TemplateNotFound(f"{name}.md")
@@ -43,5 +43,10 @@ class Prompts:
         version = header.get("version")
         if version is None:
             raise ValueError(f"в шапке {path.name} нет version: шапка с версией обязательна")
+        return f"{name}@{version}"
+
+    def render(self, name: str, variables: Mapping[str, Any]) -> tuple[str, str]:
+        """Текст промпта без шапки и версия вида `<имя>@<version>`."""
+        version = self.version(name)
         text = self._env.get_template(f"{name}.md").render(**variables).strip()
-        return text, f"{name}@{version}"
+        return text, version

@@ -161,6 +161,10 @@ def llm_scope(
         _scope.reset(token)
 
 
+def current_scope() -> Scope | None:
+    return _scope.get()
+
+
 class _Failed(Exception):
     """Модель не дала валидного ответа; текст уже замаскирован."""
 
@@ -314,6 +318,9 @@ class Gateway:
         )
         req.need_cap = "vision"
         return await self._run(req)
+
+    def prompt_version(self, prompt: str) -> str:
+        return self._prompts.version(prompt)
 
     def strategy(self, task: str) -> Literal["tools", "prefetch"]:
         cfg = self.config.task(task)
