@@ -394,11 +394,14 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
             continue
         # у числа цитата может быть короткой («11,92 ₽»): значение сверяется с ней с учётом масштаба,
         # а сама цитата ищется только целыми числами — «4%» не найдётся внутри «14%»
-        if c.quoted(label, what, [], number.quote, min_size=1) is None:
+        cites = c.quoted(label, what, [], number.quote, min_size=1)
+        if cites is None:
             continue
         value = abs(Decimal(repr(number.value)))
         unit = _clip(number.unit, 20)
-        if not unit_matches(value, unit, number.quote):
+        # и отдельным числом в источнике цитаты — вторая защита к поиску по границам чисел
+        in_source = value in set().union(*(c.numbers[n] for n in cites))
+        if not in_source or not unit_matches(value, unit, number.quote):
             c.fail(label, what, f"значения {show_number(value)} {unit} нет в цитате")
             continue
         out.numbers.append(

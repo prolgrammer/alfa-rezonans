@@ -21,6 +21,13 @@ _EDGE = ' ".,;:!?-'
 # Цифра сразу после буквы — не число: «м²» после NFKC даёт «м2», «Qwen3» — название.
 _NUMBER_RE = re.compile(r"(?<![\d.,])(?<![^\W\d_])(?:\d{1,3}(?: \d{3})+(?![\d])|\d+)(?:[.,]\d+)?")
 _SCALE_RE = re.compile(r"тыс|млн|млрд|трлн")
+# полные слова масштаба сводим к сокращениям: «1,5 миллиарда» — то же, что «1,5 млрд»
+_SCALE_WORDS = (
+    (re.compile(r"миллиард\w*"), "млрд"),
+    (re.compile(r"триллион\w*"), "трлн"),
+    (re.compile(r"миллион\w*"), "млн"),
+    (re.compile(r"тысяч\w*"), "тыс"),
+)
 # хвост диапазона «3-5%»: единица стоит после второго числа
 _RANGE_TAIL_RE = re.compile(r"-\s?\d+(?:[.,]\d+)?\s?")
 _MONTHS = (
@@ -50,44 +57,37 @@ def _parts(quote: str) -> list[str]:
     return [p for p in parts if p]
 
 
-def _whole_number_at(text: str, start: int, end: int) -> bool:
-    # цитата «4%» не должна находиться внутри «14%», а «1,5» — внутри «1,55»
-    if (
-        text[start].isdigit()
-        and start
-        and (
-            text[start - 1].isdigit() or (text[start - 1] in ".," and start > 1 and text[start - 2].isdigit())
-        )
-    ):
-        return False
-    after = text[end : end + 2]
-    return not (
-        text[end - 1].isdigit()
-        and after
-        and (after[0].isdigit() or (after[0] in ".," and after[1:].isdigit()))
-    )
+def _number_bounds(text: str) -> tuple[set[int], set[int]]:
+    spans = [m.span() for m in _NUMBER_RE.finditer(text)]
+    return {a for a, _ in spans}, {b for _, b in spans}
 
 
-def _find(text: str, part: str, pos: int) -> int:
+def _find(text: str, part: str, pos: int, bounds: tuple[set[int], set[int]]) -> int:
+    # часть, которая начинается или кончается цифрой, совпадает с границей целого числа источника:
+    # «4%» не находится внутри «14%», «500 млн» — внутри «1 500 млн», «1,5» — внутри «1,55»
+    starts, ends = bounds
     found = text.find(part, pos)
-    while found >= 0 and not _whole_number_at(text, found, found + len(part)):
+    while found >= 0 and (
+        (part[0].isdigit() and found not in starts) or (part[-1].isdigit() and found + len(part) not in ends)
+    ):
         found = text.find(part, found + 1)
     return found
 
 
 def _contains_in_order(text: str, parts: list[str]) -> bool:
-    pos = _find(text, parts[0], 0)
+    bounds = _number_bounds(text)
+    pos = _find(text, parts[0], 0, bounds)
     while pos >= 0:
         end, ok = pos + len(parts[0]), True
         for part in parts[1:]:
-            found = _find(text, part, end)
+            found = _find(text, part, end, bounds)
             if found < 0 or found - end > QUOTE_GAP_MAX:
                 ok = False
                 break
             end = found + len(part)
         if ok:
             return True
-        pos = _find(text, parts[0], pos + 1)
+        pos = _find(text, parts[0], pos + 1, bounds)
     return False
 
 
@@ -117,12 +117,18 @@ def numbers(text: str) -> set[Decimal]:
     return {Decimal(n.replace(" ", "").replace(",", ".")) for n in found}
 
 
+def _short_scales(text: str) -> str:
+    for pattern, short in _SCALE_WORDS:
+        text = pattern.sub(short, text)
+    return text
+
+
 def unit_matches(value: Decimal, unit: str, quote: str) -> bool:
     """Значение стоит в цитате с тем же масштабом (тыс, млн, млрд, трлн), а процент — с «%».
 
     Без этого «1,5 трлн рублей» прошло бы как 1,5 млрд ₽.
     """
-    unit, text = normalize(unit), normalize(quote)
+    unit, text = _short_scales(normalize(unit)), _short_scales(normalize(quote))
     scale = _SCALE_RE.search(unit)
     want = scale.group(0) if scale else None
     for m in _NUMBER_RE.finditer(text):
@@ -133,7 +139,8 @@ def unit_matches(value: Decimal, unit: str, quote: str) -> bool:
         got = _SCALE_RE.match(after)
         if (got.group(0) if got else None) != want:
             continue
-        if "%" in unit and not after.startswith(("%", "процент")):
+        # процент — в обе стороны: «5%» не проходит как 5 ₽
+        if ("%" in unit) != after.startswith(("%", "процент")):
             continue
         return True
     return False
@@ -149,7 +156,7 @@ def date_mentioned(date: dt.date, text: str) -> bool:
     patterns = (
         rf"(?<!\d)0?{day} {_MONTHS[month - 1]}",
         # «1.5%» — дробь, а не 1 мая
-        rf"(?<![\d.,])0?{day}\.0?{month}(?!\d)(?! ?%)",
+        rf"(?<![\d.,])0?{day}\.0?{month}(?!\d)(?! ?(?:%|процент))",
         rf"(?<!\d){date.year}-{month:02d}-{day:02d}(?!\d)",
     )
     return any(re.search(p, text) for p in patterns)

@@ -143,3 +143,24 @@ def test_decimal_is_not_a_date():
 def test_strip_marks_drops_base64_mark():
     shown = "Вложение [base64 опущен: 1234 символов] к пресс-релизу, ставка 14%."
     assert numbers(strip_marks(shown)) == {Decimal(14)}
+
+
+def test_quote_number_does_not_match_part_of_grouped_number():
+    texts = {1: "Выручка составила 1 500 млн рублей, прибыль 500 тыс."}
+    assert find_quote("500 млн рублей", texts, min_size=1) == set()
+    assert find_quote("1 500 млн рублей", texts, min_size=1) == {1}
+    assert find_quote("прибыль 500 тыс", texts, min_size=1) == {1}
+    assert find_quote("составила 1", texts, min_size=1) == set()
+
+
+def test_full_scale_words_and_percent_both_ways():
+    assert unit_matches(Decimal("1.5"), "млрд ₽", "1,5 миллиарда рублей")
+    assert unit_matches(Decimal(2), "трлн ₽", "2 триллиона рублей")
+    assert unit_matches(Decimal(3), "миллионов ₽", "3 млн рублей")
+    assert not unit_matches(Decimal(5), "₽", "доля 5%")
+    assert unit_matches(Decimal("0.25"), "п. п.", "рост на 0,25 п. п.")
+    assert unit_matches(Decimal(16), "%", "с 16% до 21%")
+
+
+def test_decimal_with_word_percent_is_not_a_date():
+    assert not date_mentioned(dt.date(2026, 5, 1), "рост 1.5 процента")
