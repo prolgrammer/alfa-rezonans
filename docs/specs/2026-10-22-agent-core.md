@@ -23,32 +23,36 @@
 `InsightContext` — в контракте (`app/contracts/insight.py`). Его снимок хранится в общей таблице `agent_traces`, формат столбцов общих таблиц — часть контракта (AGENTS.md, «Общий контракт»), а роли 3 и 4 читают трассу. Держать формат хранимых данных в пакете роли 1 значило бы, что его нельзя проверить моделями контракта. Изменение «трогает контракт»: новые модели добавлены, существующие не менялись.
 
 ```python
-class Spent(ContractModel):          # потраченный бюджет разбора
+class Spent(ContractModel):  # потраченный бюджет разбора
     rub: float = Field(ge=0, default=0)
     tool_calls: int = Field(ge=0, default=0)
     ms: int = Field(ge=0, default=0)
 
-class PlanStep(ContractModel):       # шаг плана ML-10: {tool, args, why}
+
+class PlanStep(ContractModel):  # шаг плана ML-10: {tool, args, why}
     tool: Slug
     args: dict[str, JsonValue]
     why: str = Field(max_length=300)
 
-class Hypothesis(ContractModel):     # гипотеза влияния ML-10
+
+class Hypothesis(ContractModel):  # гипотеза влияния ML-10
     text: str = Field(min_length=1, max_length=300)
-    factor: Slug | None              # фактор цепочки; None — новая связь, которой нет в цепочках
+    factor: Slug | None  # фактор цепочки; None — новая связь, которой нет в цепочках
     confirm: str = Field(max_length=300)
     refute: str = Field(max_length=300)
+
 
 class InsightPlan(ContractModel):
     hypotheses: list[Hypothesis] = Field(max_length=4)
     steps: list[PlanStep] = Field(max_length=6)
 
+
 class InsightContext(ContractModel):
-    event: Event                     # событие с карточкой; card может быть None
-    profile: CompactProfile | None   # сжатый профиль роли 2; None — профиля нет
-    user_role: UserRole              # из сессии; дублирует profile.user_role, потому что профиля может не быть
+    event: Event  # событие с карточкой; card может быть None
+    profile: CompactProfile | None  # сжатый профиль роли 2; None — профиля нет
+    user_role: UserRole  # из сессии; дублирует profile.user_role, потому что профиля может не быть
     chains: list[Chain]
-    plan: InsightPlan | None         # заполнит ML-10
+    plan: InsightPlan | None  # заполнит ML-10
     evidence: list[Evidence]
     spent: Spent
 ```
