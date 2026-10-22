@@ -323,6 +323,17 @@ class Gateway:
     def prompt_version(self, prompt: str) -> str:
         return self._prompts.version(prompt)
 
+    def estimate_json(
+        self, task: str, prompt: str, vars: Mapping[str, Any], schema: type[BaseModel]
+    ) -> float:
+        """Верхняя оценка вызова основной модели в рублях — та же, что идёт в резерв бюджета; без вызова."""
+        cfg = self.config.task(task)
+        text, version = self._prompts.render(prompt, vars)
+        messages = [{"role": "user", "content": text}]
+        req = self._request(task, cfg, "background", messages, schema, version, None)
+        model = next(m for m in (cfg.model, *cfg.fallback) if m)
+        return self._reserve_rub(req, self.config.models[model])
+
     def strategy(self, task: str) -> Literal["tools", "prefetch"]:
         cfg = self.config.task(task)
         if (

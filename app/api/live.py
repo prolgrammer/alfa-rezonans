@@ -29,6 +29,7 @@ from app.api.schemas import (
     Why,
 )
 from app.api.sse import SseEvent, agent_events
+from app.bank.theses import list_theses, set_verified
 from app.clients.counterparties import get_counterparties
 from app.clients.profile import get_profile
 from app.collect.market import get_market_series
@@ -154,7 +155,7 @@ class LiveBackend:
         not_implemented("BE-4")
 
     async def theses(self) -> list[ThesisItem]:
-        not_implemented("ML-6")
+        return await list_theses()
 
     async def verify_thesis(self, thesis_id: int, verified: bool) -> ThesisItem:
-        not_implemented("ML-6")
+        return await set_verified(thesis_id, verified)
