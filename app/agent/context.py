@@ -44,10 +44,15 @@ def new_context(
     )
 
 
+def stored_text(text: str) -> str:
+    """Текст доказательства в том виде, в каком он будет сохранён."""
+    # текст уйдёт в промпты как <source n="E7">, поэтому очищаем его здесь, а не у вызывающего
+    return clip(neutralize(text).text, EVIDENCE_TEXT_LIMIT)
+
+
 def add_evidence(ctx: InsightContext, type: EvidenceType, text: str, ref: AnyRef) -> str | None:
     """Единственный способ добавить доказательство; None — ссылаться не на что, утверждение пропускают."""
-    # текст уйдёт в промпты как <source n="E7">, поэтому очищаем его здесь, а не у вызывающего
-    clean = clip(neutralize(text).text, EVIDENCE_TEXT_LIMIT)
+    clean = stored_text(text)
     if not clean:
         return None
     # одна публикация даёт несколько доказательств с разными фрагментами, поэтому ключ — пара, а не ref

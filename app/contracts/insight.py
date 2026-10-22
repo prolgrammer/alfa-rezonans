@@ -189,9 +189,8 @@ class ChatTurn(ContractModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+# потраченный бюджет разбора
 class Spent(ContractModel):
-    """Потраченный бюджет разбора."""
-
     rub: float = Field(ge=0, default=0)
     tool_calls: int = Field(ge=0, default=0)
     ms: int = Field(ge=0, default=0)

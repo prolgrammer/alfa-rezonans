@@ -17,7 +17,7 @@ from app.agent.context import new_context
 from app.agent.links import build_chains, event_moves
 from app.agent.trace import TraceSink
 from app.bank.theses import fixture_bank_view
-from app.contracts import AgentStep, InsightResult, TraceRecord
+from app.contracts import AgentStep, InsightResult, Link, SourceFragment, TraceRecord
 from app.errors import NotFound
 from app.llm import AllModelsFailed, BudgetExceeded, LLMNotConfigured, LLMUnavailable
 from app.text.verify import mark_in, number_marks
@@ -39,10 +39,15 @@ async def run(company: str, ev, *, error=None, bank_view=fixture_bank_view, sink
     return steps, result
 
 
-def assert_grounded(result: InsightResult) -> None:
+def assert_grounded(result: InsightResult, company: str | None = None) -> None:
     by_id = {e.id: e for e in result.evidence}
+    true_keys = {f.key for f in PROFILES[company].features if f.value} if company else None
     for s in result.insight.statements():
         assert s.evidence
+        if true_keys is not None and isinstance(s, Link):
+            assert set(s.feature_keys) <= true_keys and len(s.feature_keys) <= 5
+            used = {by_id[e].ref.feature_key for e in s.evidence if by_id[e].type == "feature"}
+            assert set(s.feature_keys) == used
         types = {by_id[e].type for e in s.evidence}
         if s.origin == "fact":
             assert types <= {"news", "market"}
@@ -67,7 +72,7 @@ async def test_brief_on_fixtures_is_valid(event_id, company):
     assert result.mode == "brief"
     assert [s.seq for s in steps] == list(range(1, len(steps) + 1))
     assert steps[0].kind == "fallback" and steps[-1].kind == "final"
-    assert_grounded(result)
+    assert_grounded(result, company)
     assert_contiguous(result)
     assert result.insight.limitations[0].startswith("Краткий разбор: модель не подключена")
     assert result.checks.statements_total == len(result.insight.statements())
@@ -222,7 +227,9 @@ async def test_brief_skipped_items_leave_no_gaps():
             assert any("Публикации события недоступны" in x for x in insight.limitations)
         else:
             # факт со ссылкой только на публикацию 1 пропущен, а нумерация осталась плотной
-            assert len(insight.what_happened) < len(ev.card.facts) + len(ev.card.causes)
+            texts = [s.text for s in insight.what_happened]
+            assert ev.card.facts[1].text not in texts
+            assert ev.card.facts[0].text in texts
 
 
 async def test_brief_respects_block_limits():
@@ -332,3 +339,140 @@ async def test_events_fixture_is_not_mutated_by_runs():
 )
 def test_chains_word(n, word):
     assert brief._chains_word(n) == word
+
+
+async def test_tool_error_is_a_code_not_exception_text():
+    async def fail(*args):
+        raise RuntimeError("password authentication failed for user orientir at 127.0.0.1")
+
+    async def missing(*args):
+        raise NotFound("секретный путь")
+
+    steps, _ = await run("C-DEV-01", event(1), bank_view=fail)
+    assert [s.tool_call.error for s in steps if s.tool_call] == [None, "unavailable"]
+    assert all("password" not in s.model_dump_json() for s in steps)
+    steps, _ = await run("C-DEV-01", event(1), bank_view=missing)
+    assert [s.tool_call.error for s in steps if s.tool_call][-1] == "not_found"
+    assert all("секретный" not in s.model_dump_json() for s in steps)
+
+
+async def test_tool_timeout_code(monkeypatch):
+    async def hang(*args):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(brief, "READ_TIMEOUT_S", 0.05)
+    steps, _ = await run("C-DEV-01", event(1), bank_view=hang)
+    assert [s.tool_call.error for s in steps if s.tool_call][-1] == "timeout"
+
+
+async def test_empty_texts_are_skipped_not_fatal():
+    ev = event(1)
+    facts = [ev.card.facts[0].model_copy(update={"text": ""}), *ev.card.facts]
+    claims = [ev.card.claims[0].model_copy(update={"text": "  "}), *ev.card.claims]
+    dates = [ev.card.dates[0].model_copy(update={"what": " "}), *ev.card.dates]
+    card = ev.card.model_copy(update={"facts": facts, "claims": claims, "dates": dates})
+    ev = ev.model_copy(update={"card": card})
+    theses = await fixture_bank_view("key_rate")
+    blank = theses[0].model_copy(update={"thesis": theses[0].thesis.model_copy(update={"text": "   "})})
+    good = theses[1:]
+
+    async def bank(factor, limit):
+        return [blank, *good]
+
+    _, result = await run("C-DEV-01", ev, bank_view=bank)
+    insight = result.insight
+    assert "" not in [s.text.strip() for s in insight.statements()]
+    assert len(insight.bank_view.statements) == len(good)
+    assert insight.watch and insight.what_happened
+    assert_contiguous(result)
+
+
+async def test_unexpected_assembly_error_still_ends_with_result(monkeypatch, caplog):
+    def boom(*args, **kwargs):
+        raise RuntimeError("неожиданное")
+
+    monkeypatch.setattr(brief, "build_brief", boom)
+    steps, result = await run("C-DEV-01", event(1))
+    assert result.mode == "brief" and steps[-1].kind == "final"
+    assert result.insight.headline.startswith("Краткий разбор недоступен")
+    assert result.insight.impact.direction == "neutral" and result.insight.confidence == "low"
+    assert result.insight.limitations[0].startswith("Краткий разбор: модель не подключена")
+    assert result.insight.bank_view.gap and result.evidence == []
+    assert any("сборка не удалась" in r.getMessage() for r in caplog.records)
+
+
+async def test_profile_failure_degrades_to_no_profile(monkeypatch):
+    def boom(*args, **kwargs):
+        raise ValueError("странный профиль")
+
+    monkeypatch.setattr(brief, "build_chains", boom)
+    _, result = await run("C-DEV-01", event(1))
+    assert result.insight.headline == "Прямой связи события с профилем компании не найдено"
+    assert any("Профиль компании недоступен" in x for x in result.insight.limitations)
+
+
+def _fragment(text: str) -> SourceFragment:
+    return sources(1)[0].model_copy(update={"text": text})
+
+
+def _date_only_event():
+    ev = event(1)
+    card = ev.card.model_copy(update={"facts": [], "claims": [], "causes": [], "dates": ev.card.dates[:1]})
+    return ev.model_copy(update={"card": card})
+
+
+def _build_for_dates(fragment: SourceFragment):
+    ctx = new_context(_date_only_event(), None, session("C-DEV-01").user_role, [])
+    insight = build_brief(
+        ctx, profile=None, sources=[fragment], theses=[], theses_factor=None, bank_failed=False, reason="x"
+    )
+    return brief_result(ctx, insight)
+
+
+async def test_watch_date_in_numeric_form_keeps_source_form():
+    result = _build_for_dates(_fragment("Заседание назначено на 24.10.2026, сообщили в ведомстве."))
+    (watch,) = result.insight.watch
+    assert "24.10.2026" in watch.text
+    assert_grounded(result)
+
+
+async def test_watch_date_prefers_words_over_numeric():
+    result = _build_for_dates(
+        _fragment("Ранее называлось 24.10.2026. Затем уточнили: заседание 24 октября 2026 года.")
+    )
+    (watch,) = result.insight.watch
+    assert watch.text.endswith("24 октября 2026 года.")
+    assert_grounded(result)
+
+
+async def test_channel_with_digits_does_not_leak_into_statements():
+    profile = PROFILES["C-DEV-01"]
+    exposure = profile.exposures[0].model_copy(update={"channels": ["кредит под 15% годовых"]})
+    profile = profile.model_copy(update={"exposures": [exposure]})
+    ev = event(1)
+    chains = build_chains(event_moves(ev), profile.exposures)
+    assert chains[0].channel == "кредит под 15% годовых"
+    ctx = new_context(ev, None, session("C-DEV-01").user_role, chains)
+    insight = build_brief(
+        ctx, profile=profile, sources=sources(1), theses=[], theses_factor=None, bank_failed=False, reason="x"
+    )
+    result = brief_result(ctx, insight)
+    assert insight.why_it_matters and insight.risks
+    assert "15" not in " ".join(s.text for s in insight.why_it_matters + insight.risks)
+    assert "15" not in insight.headline
+    assert_grounded(result)
+
+
+def test_quote_evidence_checks_numbers_against_stored_text(monkeypatch):
+    from app.agent import context
+
+    monkeypatch.setattr(context, "EVIDENCE_TEXT_LIMIT", 70)
+    quote = "Ставка сохранена на прежнем уровне"
+    long_sentence = f"{quote}, и вот длинное пояснение без чисел, которое занимает много места, итог 77%."
+    short_sentence = f"{quote}: 77%."
+    fragment = _fragment(f"{long_sentence} {short_sentence}")
+    ctx = new_context(event(1), None, session("C-DEV-01").user_role, [])
+    builder = brief._Builder(ctx, None, [fragment])
+    evidence_id = builder.quote_evidence(fragment, quote, "Итог 77%.")
+    assert evidence_id is not None
+    assert "77%" in builder.evidence_text(evidence_id)

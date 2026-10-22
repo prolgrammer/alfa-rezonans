@@ -180,24 +180,33 @@ def build_chains(moves: Sequence[FactorMove], exposures: Sequence[Exposure]) -> 
     return sorted(chains, key=lambda c: (-c.strength, _EFFECT_RANK[c.expected_effect]))
 
 
+def _channel_label(chain: Chain) -> str:
+    # цифры из канала профиля пришли не из источника: в текст утверждения их не переносим
+    if re.search(r"\d", chain.channel):
+        return factor_names().get(chain.factor, chain.factor)
+    return chain.channel
+
+
 def effect_text(chain: Chain) -> str:
     name = factor_names().get(chain.factor, chain.factor)
+    channel = _channel_label(chain)
     if chain.company_sign == 0:
-        return f"{name}: знак влияния не определён — {chain.channel}"
+        return f"{name}: знак влияния не определён — {channel}"
     if chain.event_direction == FactorDirection.unclear:
-        return f"{name}: направление неясно — канал «{chain.channel}»"
+        return f"{name}: направление неясно — канал «{channel}»"
     if chain.event_direction == FactorDirection.volatile:
-        return f"{name}: колебания — {chain.channel} труднее планировать"
+        return f"{name}: колебания — {channel} труднее планировать"
     entry = find_channel(chain.factor, chain.channel)
     if entry is not None:
         return entry.effects[chain.event_direction]
     kind = "риск" if chain.expected_effect == ImpactDirection.risk else "возможность"
-    return f"{name}: {direction_noun(chain.event_direction)} — {kind} через «{chain.channel}»"
+    return f"{name}: {direction_noun(chain.event_direction)} — {kind} через «{channel}»"
 
 
 def link_text(chain: Chain) -> str:
     name = factor_names().get(chain.factor, chain.factor)
     noun = direction_noun(chain.event_direction)
+    channel = _channel_label(chain)
     if chain.company_sign == 0:
-        return f"{name}: {noun} — знак влияния на компанию не определён ({chain.channel})."
-    return f"{name}: {noun} — влияет на компанию через «{chain.channel}»."
+        return f"{name}: {noun} — знак влияния на компанию не определён ({channel})."
+    return f"{name}: {noun} — влияет на компанию через «{channel}»."

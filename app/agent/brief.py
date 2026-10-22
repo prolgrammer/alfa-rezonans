@@ -5,7 +5,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from decimal import Decimal
 
-from app.agent.context import bank_evidence, feature_evidence, new_context, news_evidence
+from app.agent.context import bank_evidence, feature_evidence, new_context, news_evidence, stored_text
 from app.agent.guard import bounded
 from app.agent.links import (
     FactorMove,
@@ -49,7 +49,15 @@ from app.contracts import (
 from app.errors import NotFound
 from app.llm import AllModelsFailed, BudgetExceeded, LLMNotConfigured
 from app.news.search import get_event_sources
-from app.text.verify import clip, date_mentioned, date_words, find_quote, mark_in, number_marks
+from app.text.verify import (
+    clip,
+    date_mentioned,
+    date_words,
+    find_quote,
+    mark_in,
+    normalize,
+    number_marks,
+)
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +136,8 @@ class _Builder:
         marks = number_marks(statement_text)
         for sentence in _sentences(fragment.text):
             if find_quote(quote, {0: sentence}):
-                have = number_marks(sentence)
+                # числа сверяем с текстом, каким он будет сохранён: очистка и обрезка могут унести хвост
+                have = number_marks(stored_text(sentence))
                 if all(mark_in(m, have) for m in marks):
                     return news_evidence(self.ctx, fragment, sentence)
         return news_evidence(self.ctx, fragment)
@@ -152,6 +161,9 @@ class _Builder:
             if len(block) >= limit:
                 break
             text = clip(text, STATEMENT_LIMIT)
+            # пустой текст схема не пропустит, а карточка его допускает: пропускаем, не роняя разбор
+            if not text:
+                continue
             evidence = self.cited(cites, quote, text)
             if evidence:
                 block.append(
@@ -185,24 +197,44 @@ class _Builder:
         return evidence, keys
 
     def date_evidence(self, date: dt.date) -> str | None:
-        for fragment in self.fragments:
-            for sentence in _sentences(fragment.text):
-                if date_mentioned(date, sentence):
-                    return news_evidence(self.ctx, fragment, sentence)
-            if date_mentioned(date, fragment.text):
-                return news_evidence(self.ctx, fragment)
+        # дата словами предпочтительнее числовой: её число V4 находит без оговорок
+        for mentioned in (_date_in_words, date_mentioned):
+            for fragment in self.fragments:
+                for sentence in _sentences(fragment.text):
+                    if mentioned(date, sentence):
+                        return news_evidence(self.ctx, fragment, sentence)
+                if mentioned(date, fragment.text):
+                    return news_evidence(self.ctx, fragment)
         return None
 
     def evidence_text(self, evidence_id: str) -> str:
         return next(e.text for e in self.ctx.evidence if e.id == evidence_id)
 
 
+def _date_in_words(date: dt.date, text: str) -> bool:
+    day_month = date_words(date).rsplit(" ", 2)[0]
+    day, month = day_month.split(" ")
+    return re.search(rf"(?<!\d)0?{day} {month}", normalize(text)) is not None
+
+
 def _date_phrase(date: dt.date, evidence_text: str) -> str:
-    # источник нередко пишет «на 15 октября» без года: год из карточки в утверждении V4 не нашёл бы
-    full = date_words(date)
-    if mark_in((Decimal(date.year), None, None), number_marks(evidence_text)):
-        return full
-    return full.rsplit(" ", 2)[0]
+    day_month = date_words(date).rsplit(" ", 2)[0]
+    if _date_in_words(date, evidence_text):
+        # источник нередко пишет «на 15 октября» без года: год из карточки в утверждении V4 не нашёл бы
+        if mark_in((Decimal(date.year), None, None), number_marks(evidence_text)):
+            return date_words(date)
+        return day_month
+    # числовую запись берём как в источнике, чтобы число утверждения нашлось в доказательстве
+    numeric = (
+        rf"(?<!\d){date.day:02d}\.{date.month:02d}\.{date.year}(?!\d)",
+        rf"(?<!\d)0?{date.day}\.0?{date.month}\.{date.year}(?!\d)",
+        rf"(?<![\d.,])0?{date.day}\.0?{date.month}(?!\d)",
+        rf"(?<!\d){date.year}-{date.month:02d}-{date.day:02d}(?!\d)",
+    )
+    for pattern in numeric:
+        if found := re.search(pattern, evidence_text):
+            return found.group(0)
+    return day_month
 
 
 def _chain_confidence(chain: Chain) -> Confidence:
@@ -287,7 +319,11 @@ def build_brief(
             Confidence.high,
         )
         assumptions = b.card_statements(
-            [(f"{c.text.rstrip('.')} (источник оценки — {c.who}).", c.cites, c.quote) for c in card.claims],
+            [
+                (f"{c.text.rstrip('.')} (источник оценки — {c.who}).", c.cites, c.quote)
+                for c in card.claims
+                if c.text.strip()
+            ],
             _ASSUMPTIONS_LIMIT,
             Confidence.medium,
         )
@@ -338,6 +374,8 @@ def build_brief(
         for item in card.dates:
             if len(watch) >= _WATCH_LIMIT:
                 break
+            if not item.what.strip():
+                continue
             if evidence_id := b.date_evidence(item.date):
                 phrase = _date_phrase(item.date, b.evidence_text(evidence_id))
                 text = clip(_sentence(f"{item.what}: {phrase}"), STATEMENT_LIMIT)
@@ -355,7 +393,7 @@ def build_brief(
     bank_statements: list[Statement] = []
     for item in theses[:BANK_PER_FACTOR]:
         text = clip(item.thesis.text, STATEMENT_LIMIT)
-        if evidence_id := bank_evidence(ctx, item):
+        if text and (evidence_id := bank_evidence(ctx, item)):
             shown.append(item)
             bank_statements.append(
                 Statement(
@@ -430,6 +468,33 @@ def build_brief(
     )
 
 
+def _minimal_insight(ctx: InsightContext, reason: str) -> Insight:
+    return Insight(
+        headline="Краткий разбор недоступен по техническим причинам",
+        impact=Impact(direction=ImpactDirection.neutral, strength=Magnitude.low, horizon=Horizon.months),
+        what_happened=[],
+        assumptions=[],
+        why_it_matters=[],
+        risks=[],
+        opportunities=[],
+        watch=[],
+        scenarios=[],
+        actions=[],
+        questions=[],
+        bank_view=BankView(
+            statements=[],
+            as_of=None,
+            match=ForecastMatch.no_forecast,
+            gap="Позиция банка в этом разборе не показана: сборка разбора не удалась",
+        ),
+        bank_offer=None,
+        confidence=Confidence.low,
+        limitations=[
+            clip(f"Краткий разбор: {reason}. Собрать его по шаблону не удалось по техническим причинам.", 300)
+        ],
+    )
+
+
 def brief_result(ctx: InsightContext, insight: Insight) -> InsightResult:
     used = {e for s in insight.statements() for e in s.evidence}
     statements = insight.statements()
@@ -454,8 +519,13 @@ async def _read[T](what: str, call: Awaitable[T]) -> tuple[T | None, Exception |
         return None, exc
 
 
-def _error_text(error: Exception) -> str:
-    return clip(str(error) or type(error).__name__, 300)
+def _error_code(error: Exception) -> str:
+    # текст исключения содержит адреса и имена из БД: клиенту уходит только код, полный текст — в журнал
+    if isinstance(error, NotFound):
+        return "not_found"
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    return "unavailable"
 
 
 def _chains_word(n: int) -> str:
@@ -504,8 +574,13 @@ async def run_brief(
     started = time.perf_counter()
     profile, _ = await _read("профиль компании", get_profile(session.company_id))
     if profile is not None:
-        ctx.profile = profile_compact(profile, session.user_role)
-        ctx.chains = build_chains(event_moves(event), profile.exposures)
+        try:
+            ctx.profile = profile_compact(profile, session.user_role)
+            ctx.chains = build_chains(event_moves(event), profile.exposures)
+        except Exception:
+            # нестандартный профиль не должен оставить без разбора: считаем, что профиля нет
+            log.exception("краткий разбор: профиль не удалось свести к цепочкам")
+            profile, ctx.profile, ctx.chains = None, None, []
     ms = _elapsed_ms(started)
     ctx.spent.ms += ms
     yield await sink.record(
@@ -535,7 +610,7 @@ async def run_brief(
             result_chars=sum(len(f.text) for f in fragments or []),
             duration_ms=ms,
             ok=failure is None,
-            error=_error_text(failure) if failure else None,
+            error=_error_code(failure) if failure else None,
         ),
     )
 
@@ -562,7 +637,7 @@ async def run_brief(
                 result_chars=sum(len(t.thesis.text) + len(t.thesis.quote) for t in found or []),
                 duration_ms=ms,
                 ok=failure is None,
-                error=_error_text(failure) if failure else None,
+                error=_error_code(failure) if failure else None,
             ),
         )
         if failure is not None:
@@ -572,16 +647,21 @@ async def run_brief(
             theses, theses_factor = found, factor
             break
 
-    insight = build_brief(
-        ctx,
-        profile=profile,
-        sources=fragments,
-        theses=theses,
-        theses_factor=theses_factor,
-        bank_failed=bank_failed,
-        reason=reason,
-    )
-    result = brief_result(ctx, insight)
+    try:
+        insight = build_brief(
+            ctx,
+            profile=profile,
+            sources=fragments,
+            theses=theses,
+            theses_factor=theses_factor,
+            bank_failed=bank_failed,
+            reason=reason,
+        )
+        result = brief_result(ctx, insight)
+    except Exception:
+        # поток обязан закончиться разбором: «пустого экрана не бывает никогда»
+        log.exception("краткий разбор: сборка не удалась, отдаю минимальный")
+        result = brief_result(ctx, _minimal_insight(ctx, reason))
     yield await sink.record(
         ctx,
         StepKind.final,

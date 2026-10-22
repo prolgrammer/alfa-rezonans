@@ -46,7 +46,7 @@ async def test_memory_sink_numbers_steps(ctx):
     sink = TraceSink(start=12)
     first = await sink.record(ctx, StepKind.links, "a", "i", "o")
     second = await sink.record(None, StepKind.final, "b", "", "")
-    assert (first.seq, second.seq, sink.last_seq) == (13, 14, 14)
+    assert (first.seq, second.seq) == (13, 14)
     assert sink.steps == [first, second]
     assert await sink.flush() is True
 
@@ -87,14 +87,27 @@ async def test_flush_failure_returns_false_and_logs(ctx, caplog):
 
 
 async def test_sink_hang_costs_one_timeout(ctx, monkeypatch):
-    monkeypatch.setattr(trace, "TRACE_WRITE_TIMEOUT_S", 0.05)
-    sink = TraceSink(insight_id=7, store=FakeStore(hang=True))
+    monkeypatch.setattr(trace, "TRACE_WRITE_TIMEOUT_S", 0.2)
+    store = FakeStore(hang=True)
+    sink = TraceSink(insight_id=7, store=store)
     started = time.perf_counter()
     for i in range(5):
         await sink.record(ctx, StepKind.tool, f"шаг {i}", "", "")
     assert await sink.flush() is False
-    assert time.perf_counter() - started < 0.5
+    elapsed = time.perf_counter() - started
+    assert 0.15 <= elapsed < 0.6
     assert len(sink.steps) == 5
+    # висящая запись одна: вторую поверх неё flush не начинает
+    assert len(store.calls) == 1
+
+
+async def test_flush_with_write_in_flight_warns(ctx, monkeypatch, caplog):
+    monkeypatch.setattr(trace, "TRACE_WRITE_TIMEOUT_S", 0.05)
+    sink = TraceSink(insight_id=7, store=FakeStore(hang=True))
+    await sink.record(ctx, StepKind.tool, "a", "", "")
+    with caplog.at_level(logging.WARNING):
+        assert await sink.flush() is False
+    assert any("не подтверждена" in r.getMessage() and "1" in r.getMessage() for r in caplog.records)
 
 
 async def test_snapshot_is_taken_at_step_time(ctx):
@@ -212,3 +225,37 @@ async def test_unknown_insight_fk_does_not_raise(db, ctx):
     step = await sink.record(ctx, StepKind.tool, "a", "", "")
     assert step.seq == 1
     assert await sink.flush() is False
+
+
+async def test_invalid_context_keeps_step(db, insight_id, ctx, caplog):
+    sink = TraceSink(insight_id=insight_id)
+    await sink.record(ctx, StepKind.tool, "первый", "", "")
+    good = await sink.record(ctx, StepKind.tool, "второй", "", "")
+    await sink.flush()
+    async with db.connection() as conn:
+        await conn.execute(
+            "UPDATE agent_traces SET step = jsonb_set(step, '{context,event,extra_field}', '1') "
+            "WHERE insight_id = %s AND seq = 2",
+            (insight_id,),
+        )
+    with caplog.at_level(logging.WARNING):
+        steps = await load_trace(insight_id)
+        restored = await load_context(insight_id)
+    assert [s.title for s in steps] == ["первый", "второй"] and steps[1] == good
+    assert restored == ctx
+    assert any("снимок контекста" in r.getMessage() for r in caplog.records)
+
+
+async def test_store_write_gives_up_on_lock(db, db_conn, insight_id):
+    from psycopg import errors
+
+    # таблица заблокирована чужой транзакцией: запись обязана сдаться по lock_timeout, а не висеть
+    db_conn.execute("BEGIN")
+    db_conn.execute("LOCK TABLE agent_traces IN ACCESS EXCLUSIVE MODE")
+    try:
+        started = time.perf_counter()
+        with pytest.raises(errors.LockNotAvailable):
+            await trace.PgTraceStore().write(insight_id, None, [(1, "{}")], reset=False)
+        assert time.perf_counter() - started < 4
+    finally:
+        db_conn.execute("ROLLBACK")

@@ -31,6 +31,9 @@ class PgTraceStore:
         self, insight_id: int | None, chat_id: UUID | None, rows: Sequence[tuple[int, str]], *, reset: bool
     ) -> None:
         async with (await get_pool()).connection() as conn, conn.transaction():
+            # запись, пережившая таймаут, не должна держать соединение пула и блокировки бесконечно
+            await conn.execute("SET LOCAL statement_timeout = '5s'")
+            await conn.execute("SET LOCAL lock_timeout = '2s'")
             # перезапуск разбора с тем же insight_id: иначе хвост прошлого, более длинного прогона остался бы
             if reset and insight_id is not None:
                 await conn.execute("DELETE FROM agent_traces WHERE insight_id = %s", (insight_id,))
@@ -64,6 +67,8 @@ class TraceSink:
         self._steps: list[AgentStep] = []
         self._queue: list[tuple[int, str]] = []
         self._deferred = False
+        # запись, пережившая таймаут, ещё идёт в фоне: вторую поверх неё не начинаем
+        self._in_flight = False
         # старые строки разбора стираются первой успешной записью; чат дописывается к прежним
         self._reset = insight_id is not None
         self._lock = asyncio.Lock()
@@ -71,10 +76,6 @@ class TraceSink:
     @property
     def steps(self) -> list[AgentStep]:
         return list(self._steps)
-
-    @property
-    def last_seq(self) -> int:
-        return self._seq
 
     async def record(
         self,
@@ -108,9 +109,8 @@ class TraceSink:
             )
             self._steps.append(step)
             if self._store is not None:
-                # снимок берётся сейчас: контекст дальше меняется, а в очереди нужно состояние после шага
-                snapshot = ctx.model_copy(deep=True) if ctx is not None else None
-                self._queue.append((step.seq, TraceRecord(step=step, context=snapshot).model_dump_json()))
+                # строка сериализуется сразу, поэтому дальнейшие изменения контекста запись не затрагивают
+                self._queue.append((step.seq, TraceRecord(step=step, context=ctx).model_dump_json()))
                 if not self._deferred:
                     await self._write(final=False)
             return step
@@ -119,16 +119,23 @@ class TraceSink:
         async with self._lock:
             if self._store is None or not self._queue:
                 return True
+            if self._in_flight:
+                log.warning("трасса разбора не подтверждена, шагов в очереди: %d", len(self._queue))
+                return False
             return await self._write(final=True)
+
+    async def _store_write(self, store: TraceStore, rows: list[tuple[int, str]]) -> None:
+        self._in_flight = True
+        try:
+            await store.write(self._insight_id, self._chat_id, rows, reset=self._reset)
+        finally:
+            self._in_flight = False
 
     async def _write(self, *, final: bool) -> bool:
         assert self._store is not None
         rows = list(self._queue)
         try:
-            await bounded(
-                self._store.write(self._insight_id, self._chat_id, rows, reset=self._reset),
-                TRACE_WRITE_TIMEOUT_S,
-            )
+            await bounded(self._store_write(self._store, rows), TRACE_WRITE_TIMEOUT_S)
         except Exception:
             self._deferred = True
             if final:
@@ -151,12 +158,22 @@ async def _load_records(insight_id: int) -> list[TraceRecord]:
     # при повторной записи после обрыва связи у одного seq несколько строк: берём последнюю
     records: dict[int, TraceRecord] = {}
     for row in found:
+        raw, seq = row["step"], row["seq"]
         try:
-            records[row["seq"]] = TraceRecord.model_validate(row["step"])
-        except ValidationError:
-            log.warning(
-                "строка трассы разбора %s, шаг %s не проходит контракт, пропущена", insight_id, row["seq"]
-            )
+            step = AgentStep.model_validate(raw["step"])
+        except (ValidationError, KeyError, TypeError):
+            log.warning("строка трассы разбора %s, шаг %s не проходит контракт, пропущена", insight_id, seq)
+            continue
+        context = None
+        # снимок хранит модели других ролей: после их правок он устаревает, а сам шаг остаётся годным
+        if raw.get("context") is not None:
+            try:
+                context = InsightContext.model_validate(raw["context"])
+            except ValidationError:
+                log.warning(
+                    "снимок контекста разбора %s, шаг %s не проходит контракт, отброшен", insight_id, seq
+                )
+        records[seq] = TraceRecord(step=step, context=context)
     return [records[seq] for seq in sorted(records)]
 
 
@@ -165,5 +182,5 @@ async def load_trace(insight_id: int) -> list[AgentStep]:
 
 
 async def load_context(insight_id: int) -> InsightContext | None:
-    records = await _load_records(insight_id)
-    return records[-1].context if records else None
+    contexts = [r.context for r in await _load_records(insight_id) if r.context is not None]
+    return contexts[-1] if contexts else None
