@@ -40,7 +40,6 @@ from app.news.search import get_event_sources
 from app.text.sanitize import (
     Flag,
     Source,
-    Wrapped,
     neutralize,
     render_sources,
     sanitize,
@@ -49,6 +48,7 @@ from app.text.sanitize import (
 )
 from app.text.verify import (
     QUOTE_MIN,
+    clip,
     date_mentioned,
     find_quote,
     numbers,
@@ -277,24 +277,13 @@ async def title_factors(title: str) -> frozenset[str]:
     return frozenset()
 
 
-def _clip(text: str, limit: int) -> str:
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    cut = text[: limit - 1]
-    space = cut.rfind(" ")
-    if space >= limit * 0.6:
-        cut = cut[:space]
-    return cut.rstrip(" ,;:") + "…"
-
-
 def _sentence(text: str) -> str:
     text = text.strip()
     return text if text.endswith((".", "!", "?", "…")) else text + "."
 
 
 def _texts(items: list[str], limit: int, count: int) -> list[str]:
-    cleaned = (_clip(item, limit) for item in items)
+    cleaned = (clip(item, limit) for item in items)
     return list(dict.fromkeys(item for item in cleaned if item))[:count]
 
 
@@ -323,7 +312,7 @@ class _Checker:
         self.out = _Checked()
 
     def fail(self, label: str, text: str, problem: str) -> None:
-        self.out.errors.append(f"{label} «{_clip(text, _ERROR_TEXT)}»: {problem}")
+        self.out.errors.append(f"{label} «{clip(text, _ERROR_TEXT)}»: {problem}")
 
     def quoted(
         self, label: str, text: str, cites: list[int], quote: str, *, min_size: int = QUOTE_MIN
@@ -338,7 +327,7 @@ class _Checker:
             return None
         found = find_quote(quote, self.shown, min_size=min_size)
         if not found:
-            self.fail(label, text, f"цитаты «{_clip(quote, _ERROR_TEXT)}» нет дословно ни в одном источнике")
+            self.fail(label, text, f"цитаты «{clip(quote, _ERROR_TEXT)}» нет дословно ни в одном источнике")
             return None
         # первым — источник, где цитата стоит: его подсветит интерфейс
         return sorted(found) + [n for n in dict.fromkeys(cites) if n in self.shown and n not in found]
@@ -363,21 +352,21 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
     c = _Checker(shown)
     out = c.out
     # числа сверяются в том виде, в каком текст попадёт в карточку: обрезка могла бы задеть число
-    out.summary = _clip(draft.summary, 600)
+    out.summary = clip(draft.summary, 600)
     if not out.summary:
         out.summary_ok = False
         out.errors.append("summary: пустая сводка")
     else:
         out.summary_ok = c.numbers_ok("summary", out.summary, None)
     for i, fact in enumerate(draft.facts):
-        label, text = f"facts[{i}]", _clip(fact.text, 400)
+        label, text = f"facts[{i}]", clip(fact.text, 400)
         if not c.filled(label, text, fact.quote):
             continue
         cites = c.quoted(label, text, fact.cites, fact.quote)
         if cites is not None and c.numbers_ok(label, text, cites):
-            out.facts.append(CardFact(text=text, cites=cites, quote=_clip(fact.quote, 500)))
+            out.facts.append(CardFact(text=text, cites=cites, quote=clip(fact.quote, 500)))
     for i, claim in enumerate(draft.claims):
-        label, text = f"claims[{i}]", _clip(claim.text, 400)
+        label, text = f"claims[{i}]", clip(claim.text, 400)
         if not c.filled(label, text, claim.quote):
             continue
         if not claim.who.strip():
@@ -386,10 +375,10 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
         cites = c.quoted(label, text, claim.cites, claim.quote)
         if cites is not None and c.numbers_ok(label, text, cites):
             out.claims.append(
-                CardClaim(text=text, who=_clip(claim.who, 120), cites=cites, quote=_clip(claim.quote, 500))
+                CardClaim(text=text, who=clip(claim.who, 120), cites=cites, quote=clip(claim.quote, 500))
             )
     for i, number in enumerate(draft.numbers):
-        label, what = f"numbers[{i}]", _clip(number.what, 120)
+        label, what = f"numbers[{i}]", clip(number.what, 120)
         if not c.filled(label, what, number.quote):
             continue
         # у числа цитата может быть короткой («11,92 ₽»): значение сверяется с ней с учётом масштаба,
@@ -398,17 +387,17 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
         if cites is None:
             continue
         value = abs(Decimal(repr(number.value)))
-        unit = _clip(number.unit, 20)
+        unit = clip(number.unit, 20)
         # и отдельным числом в источнике цитаты — вторая защита к поиску по границам чисел
         in_source = value in set().union(*(c.numbers[n] for n in cites))
         if not in_source or not unit_matches(value, unit, number.quote):
             c.fail(label, what, f"значения {show_number(value)} {unit} нет в цитате")
             continue
         out.numbers.append(
-            CardNumber(what=what, value=number.value, unit=unit, quote=_clip(number.quote, 500))
+            CardNumber(what=what, value=number.value, unit=unit, quote=clip(number.quote, 500))
         )
     for i, cause in enumerate(draft.causes):
-        label, text = f"causes[{i}]", _clip(cause.text, 400)
+        label, text = f"causes[{i}]", clip(cause.text, 400)
         if not c.filled(label, text):
             continue
         cites = [n for n in dict.fromkeys(cause.cites) if n in shown]
@@ -421,12 +410,12 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
         try:
             date = dt.date.fromisoformat(item.date)
         except ValueError:
-            c.fail(label, item.what, f"дата «{_clip(item.date, 20)}» не в виде ГГГГ-ММ-ДД")
+            c.fail(label, item.what, f"дата «{clip(item.date, 20)}» не в виде ГГГГ-ММ-ДД")
             continue
         if not any(date_mentioned(date, text) for text in shown.values()):
             c.fail(label, item.what, f"дня и месяца даты {date.isoformat()} нет в источниках")
             continue
-        out.dates.append(CardDate(what=_clip(item.what, 120), date=date))
+        out.dates.append(CardDate(what=clip(item.what, 120), date=date))
     known_factors = factor_ids()
     seen: set[str] = set()
     for i, factor in enumerate(draft.factors):
@@ -446,7 +435,7 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
                 id=factor.id,
                 direction=factor.direction,
                 magnitude=factor.magnitude,
-                quote=_clip(factor.quote, 500),
+                quote=clip(factor.quote, 500),
             )
         )
     known_sectors = sector_ids()
@@ -472,7 +461,7 @@ def _strong_first(checked: _Checked, title: str, strong: frozenset[str]) -> list
                     id=factor.id,
                     direction=factor.direction,
                     magnitude=factor.magnitude,
-                    quote=_clip(title, 500),
+                    quote=clip(title, 500),
                 )
             )
     for factor_id in sorted(strong - have):
@@ -481,7 +470,7 @@ def _strong_first(checked: _Checked, title: str, strong: frozenset[str]) -> list
                 id=factor_id,
                 direction=FactorDirection.unclear,
                 magnitude=Magnitude.medium,
-                quote=_clip(title, 500),
+                quote=clip(title, 500),
             )
         )
     factors = checked.factors + rescued
@@ -495,7 +484,7 @@ def _assemble(draft: CardDraft, checked: _Checked, title: str, strong: frozenset
         # заголовок может опустеть после санитайзера, а сводка обязательна по контракту
         summary = " ".join(_sentence(f.text) for f in checked.facts[:2]) or title or NO_SUMMARY
     return EventCard(
-        summary=_clip(summary, 600),
+        summary=clip(summary, 600),
         facts=checked.facts[:10],
         claims=checked.claims[:10],
         actors=_texts(draft.actors, 120, 15),
@@ -516,12 +505,6 @@ def _source_attrs(fragment: SourceFragment) -> dict[str, str]:
     if fragment.is_official:
         attrs["official"] = "да"
     return attrs
-
-
-def _shown_text(block: Wrapped) -> str:
-    # текст источника в том виде, какой видела модель: между строкой <source …> и </source>
-    _, _, rest = block.text.partition("\n")
-    return rest.removesuffix("</source>").removesuffix("\n")
 
 
 @contextlib.contextmanager
@@ -561,7 +544,7 @@ async def build_event_card(
         wrap_source(n, fragment.text, limit=CARD_SOURCE_LIMIT, **_source_attrs(fragment))
         for n, fragment in picked.items()
     ]
-    shown = {int(block.n): _shown_text(block) for block in blocks}
+    shown = {int(block.n): block.body for block in blocks}
     title = sanitize(title)
     factors, sectors = factor_names(), sector_names()
     strong = frozenset(f for f in hints.strong if f in factors)

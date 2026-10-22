@@ -28,7 +28,7 @@ from app.api.schemas import (
     Trace,
 )
 from app.api.sse import SseEvent, agent_events
-from app.bank.theses import get_bank_view
+from app.bank.theses import fixture_bank_view
 from app.clients.profile import get_profile
 from app.collect.market import get_market_series
 from app.contracts import (
@@ -148,7 +148,7 @@ class MockBackend(LiveBackend):
         ]
         bank: dict[int, ThesisItem] = {}
         for factor in event.factors:
-            for item in await get_bank_view(factor, BANK_PER_FACTOR):
+            for item in await fixture_bank_view(factor, BANK_PER_FACTOR):
                 bank.setdefault(item.id, item)
         return EventDetail(
             event=event,

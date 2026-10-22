@@ -30,6 +30,25 @@ _SCALE_WORDS = (
 )
 # хвост диапазона «3-5%»: единица стоит после второго числа
 _RANGE_TAIL_RE = re.compile(r"-\s?\d+(?:[.,]\d+)?\s?")
+# закрытый набор единиц после числа; «процентный пункт» — не процент, поэтому pp раньше pct.
+# У коротких основ — граница слова: «руб» не должно находиться в «рубеж», «евро» — в «европейских»
+_UNIT_RE = re.compile(
+    r"(?P<pp>п\. ?п\.?|(?<!\w)пп(?!\w)|процентн\w* пункт\w*)"
+    r"|(?P<bp>б\. ?п\.?|базисн\w* пункт\w*|(?<!\w)bps?(?!\w))"
+    r"|(?P<pct>%|процент(?!н))"
+    r"|(?P<rub>₽|(?<!\w)руб(?:л\w*)?(?!\w)|(?<!\w)rub(?!\w))"
+    r"|(?P<usd>\$|(?<!\w)долл(?:ар\w*)?(?!\w)|(?<!\w)usd(?!\w))"
+    r"|(?P<eur>€|(?<!\w)евро(?!\w)|(?<!\w)eur(?!\w))"
+    r"|(?P<cny>¥|(?<!\w)юан\w*|(?<!\w)cny(?!\w))"
+    r"|(?P<times>раз(?:а)?(?!\w))"
+)
+# валюта перед числом: «$80», «на € 5 млрд»
+_CURRENCY_PREFIX = {"$": "usd", "€": "eur", "¥": "cny", "₽": "rub"}
+_UNIT_NAMES = {"pct": "%"}
+# «2025 — 6,5%»: год с пробелом перед тире не получает единицу следующего числа
+_YEAR_RE = re.compile(r"(?:19|20)\d\d")
+# если искомое число без валюты, цитата может уточнять его валютой или «раз»; «%», pp и bp строгие
+_LOOSE_UNITS = frozenset({"rub", "usd", "eur", "cny", "times"})
 _MONTHS = (
     "января",
     "февраля",
@@ -123,27 +142,69 @@ def _short_scales(text: str) -> str:
     return text
 
 
-def unit_matches(value: Decimal, unit: str, quote: str) -> bool:
-    """Значение стоит в цитате с тем же масштабом (тыс, млн, млрд, трлн), а процент — с «%».
+type NumberMark = tuple[Decimal, str | None, str | None]
 
-    Без этого «1,5 трлн рублей» прошло бы как 1,5 млрд ₽.
+
+def _unit(match: re.Match[str] | None) -> str | None:
+    if match is None or match.lastgroup is None:
+        return None
+    return _UNIT_NAMES.get(match.lastgroup, match.lastgroup)
+
+
+def number_marks(text: str) -> set[NumberMark]:
+    """Числа текста как (значение, масштаб, единица): масштаб — тыс, млн, млрд, трлн; единица —
+    %, pp, bp, rub, usd, eur, cny, times или None.
+
+    «1,5 млрд» и «1,5 трлн» — разные отметки, как и «5%» и «5 ₽»: так искажённое число не проходит.
     """
-    unit, text = _short_scales(normalize(unit)), _short_scales(normalize(quote))
-    scale = _SCALE_RE.search(unit)
-    want = scale.group(0) if scale else None
+    text = _short_scales(normalize(text))
+    marks: set[NumberMark] = set()
     for m in _NUMBER_RE.finditer(text):
-        if Decimal(m.group(0).replace(" ", "").replace(",", ".")) != value:
-            continue
         after = text[m.end() :].lstrip()
-        after = after[_RANGE_TAIL_RE.match(after).end() :] if _RANGE_TAIL_RE.match(after) else after
-        got = _SCALE_RE.match(after)
-        if (got.group(0) if got else None) != want:
-            continue
-        # процент — в обе стороны: «5%» не проходит как 5 ₽
-        if ("%" in unit) != after.startswith(("%", "процент")):
-            continue
-        return True
-    return False
+        # «2025 - 6,5%»: год с пробелом перед тире — подпись строки таблицы; «2000-2500 руб.» — диапазон
+        year_label = _YEAR_RE.fullmatch(m.group(0)) is not None and text[m.end() : m.end() + 1].isspace()
+        if not year_label and (tail := _RANGE_TAIL_RE.match(after)):
+            after = after[tail.end() :]
+        scale = _SCALE_RE.match(after)
+        if scale:
+            # «тыс. руб.»: точка после масштаба относится к сокращению
+            after = after[scale.end() :].lstrip(" .")
+        value = Decimal(m.group(0).replace(" ", "").replace(",", "."))
+        unit = _unit(_UNIT_RE.match(after))
+        if unit is None:
+            # единицы после числа нет — смотрим символ валюты перед ним
+            before = text[: m.start()].rstrip()
+            unit = _CURRENCY_PREFIX.get(before[-1:])
+        marks.add((value, scale.group(0) if scale else None, unit))
+    return marks
+
+
+def mark_in(mark: NumberMark, marks: set[NumberMark]) -> bool:
+    """Отметка есть среди отметок цитаты: значение и масштаб равны, единицы равны либо искомая не указана."""
+    value, scale, unit = mark
+    return any(
+        v == value and s == scale and (u == unit or (unit is None and u in _LOOSE_UNITS)) for v, s, u in marks
+    )
+
+
+def unit_matches(value: Decimal, unit: str, quote: str) -> bool:
+    """Значение стоит в цитате с масштабом и единицей из `unit`; без единицы подходит валюта или «раз»."""
+    unit = _short_scales(normalize(unit))
+    scale = _SCALE_RE.search(unit)
+    want = (value, scale.group(0) if scale else None, _unit(_UNIT_RE.search(unit)))
+    return mark_in(want, number_marks(quote))
+
+
+def clip(text: str, limit: int) -> str:
+    """Схлопывает пробелы и обрезает по слову с «…»: префикс дословной цитаты остаётся дословным."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if space >= limit * 0.6:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:") + "…"
 
 
 def show_number(value: Decimal) -> str:

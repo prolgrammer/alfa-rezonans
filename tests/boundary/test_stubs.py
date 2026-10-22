@@ -3,10 +3,10 @@ import datetime as dt
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from app.agent import run
+from app.agent import run, tools
 from app.agent.run import run_chat, run_insight
 from app.agent.tools import build_tools
-from app.bank.theses import extract_theses, get_bank_view
+from app.bank.theses import fixture_bank_view
 from app.clients.counterparties import get_counterparties, get_sector_exposure
 from app.clients.exposures import exposures
 from app.clients.profile import feature_phrase, get_profile, profile_compact
@@ -14,7 +14,6 @@ from app.collect.market import get_market_series
 from app.contracts import (
     Access,
     AgentStep,
-    BankThesis,
     ChatAnswer,
     ChatTurn,
     CounterpartyShare,
@@ -186,19 +185,19 @@ async def test_event_card_without_llm_raises():
     assert await build_event_card("Без публикаций", CardHints(), []) is None
 
 
-async def test_bank_view_is_verified_and_fresh():
-    items = await get_bank_view("key_rate")
+@pytest.fixture(autouse=True)
+def bank_view_from_fixture(monkeypatch):
+    # инструменты агента здесь проверяются без БД: позиция банка — из фикстуры, как в MOCK
+    monkeypatch.setattr(tools, "get_bank_view", fixture_bank_view)
+
+
+async def test_fixture_bank_view_is_verified_and_fresh():
+    items = await fixture_bank_view("key_rate")
     assert items and len(items) <= 3
     assert all(isinstance(i, ThesisItem) and i.verified is True for i in items)
     dates = [i.published_on for i in items]
     assert dates == sorted(dates, reverse=True)
-    assert len(await get_bank_view("key_rate", limit=1)) == 1
-
-
-async def test_extract_theses_by_doc():
-    theses = await extract_theses(1)
-    assert theses and all(isinstance(t, BankThesis) for t in theses)
-    assert await extract_theses(999) == []
+    assert len(await fixture_bank_view("key_rate", limit=1)) == 1
 
 
 async def test_rank_judge_stub_is_empty():

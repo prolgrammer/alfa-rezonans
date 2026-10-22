@@ -1,3 +1,4 @@
+import json
 import logging
 
 import httpx
@@ -19,6 +20,7 @@ from llm_support import (
 from app.llm.config import load_config
 from app.llm.errors import AllModelsFailed, BudgetExceeded, LLMNotConfigured
 from app.llm.gateway import Breaker, llm_scope
+from app.llm.provider import estimate_tokens
 from app.settings import REPO_ROOT
 
 ASK = {"what": "привет"}
@@ -42,6 +44,15 @@ async def test_ok_records_call(api, make_gw, store):
     )
     assert row.cost_rub == round(10 * 0.20 / 1000 + 5 * 0.30 / 1000, 4)
     assert (row.tokens_in, row.tokens_out, row.fallback_from, row.error) == (10, 5, None, None)
+
+
+async def test_estimate_json_is_reserve_without_call(api, make_gw, store):
+    route = route_by_model(api, {PRIMARY: GOOD})
+    rub = make_gw().estimate_json("event_card", "demo", ASK, Answer)
+    schema = json.dumps(Answer.model_json_schema(), ensure_ascii=False)
+    tokens_in = estimate_tokens("Скажи привет") + estimate_tokens(schema)
+    assert rub == pytest.approx(tokens_in * 0.20 / 1000 + 2500 * 0.30 / 1000)
+    assert not route.calls and not store.rows
 
 
 async def test_prompt_text_reaches_model(api, make_gw):
