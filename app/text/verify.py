@@ -54,13 +54,18 @@ def _contains_in_order(text: str, parts: list[str]) -> bool:
     return True
 
 
-def find_quote(quote: str, texts: Mapping[int, str]) -> set[int]:
+def quote_size(quote: str) -> int:
+    """Длина цитаты без пометок, пропусков и краевой пунктуации — то, что реально сверяется."""
+    return sum(len(p) for p in _parts(quote))
+
+
+def find_quote(quote: str, texts: Mapping[int, str], *, min_size: int = QUOTE_MIN) -> set[int]:
     """Номера текстов, в которых цитата есть дословно с точностью до нормализации.
 
     Тексты — в том виде, какой видела модель: пометки санитайзера снимаются и с них, и с цитаты.
     """
     parts = _parts(quote)
-    if sum(len(p) for p in parts) < QUOTE_MIN:
+    if not parts or sum(len(p) for p in parts) < min_size:
         return set()
     return {n for n, text in texts.items() if _contains_in_order(normalize(strip_marks(text)), parts)}
 

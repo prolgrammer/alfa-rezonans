@@ -120,7 +120,7 @@ async def test_good_answer_needs_one_call(fake):
     assert len(gateway.calls) == 1
     assert gateway.calls[0] == {
         "task": "event_card",
-        "version": "event_card@1",
+        "version": "event_card@2",
         "lane": "background",
         "event_id": 1,
     }
@@ -237,6 +237,28 @@ async def test_number_value_must_be_in_its_quote(fake):
     assert "значения 13.5 нет в цитате" in built.removed[0]
 
 
+async def test_number_quote_may_be_short_but_must_hold_whole_number(fake):
+    numbers = [
+        {"what": "ставка", "value": 14, "unit": "%", "quote": "14,0%"},
+        {"what": "цель", "value": 4, "unit": "%", "quote": "4"},
+        {"what": "часть числа", "value": 1, "unit": "%", "quote": "14,0%"},
+    ]
+    fake(with_(numbers=numbers), with_(numbers=numbers))
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert [n.what for n in built.card.numbers] == ["ставка", "цель"]
+    assert built.removed == ("numbers[2] «часть числа»: значения 1 нет в цитате",)
+    fake(with_(numbers=[{"what": "выдумка", "value": 7, "unit": "%", "quote": "7"}]), with_(numbers=[]))
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert built.retried and built.card.numbers == []
+
+
+async def test_short_quote_gets_its_own_error(fake):
+    fact = {"text": "Ставка сохранена", "cites": [1], "quote": "«14,0%»"}
+    gateway = fake(with_(facts=[fact]), good())
+    await build_event_card(TITLE, CardHints(), SOURCES)
+    assert "цитата короче 10 символов: приведи фразу из источника целиком" in gateway.prompts[1]
+
+
 async def test_causes_need_shown_cites_and_their_numbers(fake):
     causes = [
         {"text": "Инфляция выше цели", "cites": [9]},
@@ -325,7 +347,11 @@ async def test_summary_with_wrong_number_is_replaced(fake):
     summary = "ЦБ снизил ставку до 13%."
     fake(with_(summary=summary), with_(summary=summary))
     built = await build_event_card(TITLE, CardHints(), SOURCES)
-    assert built.card.summary == "ЦБ сохранил ключевую ставку на уровне 14,0%"
+    assert built.card.summary == "ЦБ сохранил ключевую ставку на уровне 14,0%."
+    two = [good()["facts"][0], {**good()["facts"][0], "text": "Пауза первая после снижений!"}]
+    fake(with_(summary=summary, facts=two), with_(summary=summary, facts=two))
+    built = await build_event_card(TITLE, CardHints(), SOURCES)
+    assert built.card.summary == "ЦБ сохранил ключевую ставку на уровне 14,0%. Пауза первая после снижений!"
     assert built.removed[0].startswith("summary")
     fake(with_(summary=" ", facts=[]), with_(summary="", facts=[]))
     built = await build_event_card(TITLE, CardHints(), SOURCES)
@@ -418,7 +444,7 @@ def test_real_prompt_renders():
             "errors": ["facts[0] «x»: ошибка"],
         },
     )
-    assert version == "event_card@1"
+    assert version == "event_card@2"
     assert "- facts[0] «x»: ошибка" in text
     assert "\n\n\n" not in text
 
@@ -477,7 +503,7 @@ async def test_card_is_saved_and_then_served_from_cache(db, fake):
     assert card is not None and card.event_type == "regulator_decision"
     row = await stored(db)
     assert row["card_status"] == "ok"
-    assert row["card_key"] == f"event_card@1|{PRIMARY}|3"
+    assert row["card_key"] == f"event_card@2|{PRIMARY}|3"
     assert row["card"]["facts"][0]["cites"] == [1]
     assert "факторы: key_rate" in gateway.prompts[0]
     assert await extract_event_card(1) == card
@@ -487,9 +513,9 @@ async def test_card_is_saved_and_then_served_from_cache(db, fake):
 @pytest.mark.parametrize(
     "key",
     [
-        f"event_card@1|{PRIMARY}|2",  # выросло число источников
+        f"event_card@2|{PRIMARY}|2",  # выросло число источников
         f"event_card@0|{PRIMARY}|3",  # другая версия промпта
-        "event_card@1|gpt-4o|3",  # модели больше нет в цепочке задачи
+        "event_card@2|gpt-4o|3",  # модели больше нет в цепочке задачи
         "мусор",
     ],
 )
@@ -500,11 +526,11 @@ async def test_stale_key_rebuilds(db, fake, key):
     card = await extract_event_card(1)
     assert len(gateway.calls) == 1
     assert card.summary.startswith("Банк России 11 сентября")
-    assert (await stored(db))["card_key"] == f"event_card@1|{PRIMARY}|3"
+    assert (await stored(db))["card_key"] == f"event_card@2|{PRIMARY}|3"
 
 
 async def test_fallback_model_card_is_cached(db, fake):
-    await insert_event(db, card=Jsonb(good()), key="event_card@1|deepseek-v4.1-flash|3", status="ok")
+    await insert_event(db, card=Jsonb(good()), key="event_card@2|deepseek-v4.1-flash|3", status="ok")
     gateway = fake()
     assert await extract_event_card(1) is not None
     assert gateway.calls == []
@@ -519,7 +545,7 @@ async def test_llm_failure_without_card_is_failed(db, fake):
 
 
 async def test_llm_failure_keeps_previous_card(db, fake):
-    old_key = f"event_card@1|{PRIMARY}|2"
+    old_key = f"event_card@2|{PRIMARY}|2"
     await insert_event(db, card=Jsonb(good()), key=old_key, status="ok")
     fake(AllModelsFailed("упали все"))
     card = await extract_event_card(1)
@@ -567,7 +593,7 @@ async def test_concurrent_calls_build_once(db, fake):
 
 async def test_card_failing_contract_is_rebuilt(db, fake):
     await insert_event(
-        db, card=Jsonb({"summary": "старый формат"}), key=f"event_card@1|{PRIMARY}|3", status="ok"
+        db, card=Jsonb({"summary": "старый формат"}), key=f"event_card@2|{PRIMARY}|3", status="ok"
     )
     gateway = fake(good())
     assert (await extract_event_card(1)).event_type == "regulator_decision"

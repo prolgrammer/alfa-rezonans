@@ -2,7 +2,7 @@ import datetime as dt
 from decimal import Decimal
 
 from app.text.sanitize import COMMAND_MARK, TRUNCATED_MARK
-from app.text.verify import date_mentioned, find_quote, normalize, numbers, show_number
+from app.text.verify import date_mentioned, find_quote, normalize, numbers, quote_size, show_number
 
 NBSP = chr(0xA0)
 THIN = chr(0x202F)
@@ -33,6 +33,9 @@ def test_quote_missing_returns_empty():
 def test_short_quote_is_rejected():
     assert find_quote("ставку", {1: SOURCE}) == set()
     assert find_quote("«14,0%»", {1: SOURCE}) == set()
+    assert quote_size("«14,0%»") == 5
+    assert find_quote("«14,0%»", {1: SOURCE}, min_size=1) == {1}
+    assert find_quote(" … ", {1: SOURCE}, min_size=1) == set()
 
 
 def test_edge_punctuation_and_ellipsis_are_trimmed():

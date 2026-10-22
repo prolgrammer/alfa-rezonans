@@ -38,7 +38,7 @@ from app.errors import NotFound
 from app.llm import LLMUnavailable, Scope, current_scope, gw, llm_scope
 from app.news.search import get_event_sources
 from app.text.sanitize import Flag, Source, Wrapped, neutralize, render_sources, sanitize, wrap_source
-from app.text.verify import date_mentioned, find_quote, numbers, show_number
+from app.text.verify import QUOTE_MIN, date_mentioned, find_quote, numbers, quote_size, show_number
 
 log = logging.getLogger(__name__)
 
@@ -270,6 +270,11 @@ def _clip(text: str, limit: int) -> str:
     return cut.rstrip(" ,;:") + "…"
 
 
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text.endswith((".", "!", "?", "…")) else text + "."
+
+
 def _texts(items: list[str], limit: int, count: int) -> list[str]:
     cleaned = (_clip(item, limit) for item in items)
     return list(dict.fromkeys(item for item in cleaned if item))[:count]
@@ -300,13 +305,18 @@ class _Checker:
     def fail(self, label: str, text: str, problem: str) -> None:
         self.out.errors.append(f"{label} «{_clip(text, _ERROR_TEXT)}»: {problem}")
 
-    def quoted(self, label: str, text: str, cites: list[int], quote: str) -> list[int] | None:
+    def quoted(
+        self, label: str, text: str, cites: list[int], quote: str, *, min_size: int = QUOTE_MIN
+    ) -> list[int] | None:
         """Номера источников элемента или None, если цитаты нет.
 
         Номер вне показанных отбрасывается; источник, где цитата нашлась, добавляется: где она стоит,
         код знает точнее модели.
         """
-        found = find_quote(quote, self.shown)
+        if quote_size(quote) < min_size:
+            self.fail(label, text, f"цитата короче {min_size} символов: приведи фразу из источника целиком")
+            return None
+        found = find_quote(quote, self.shown, min_size=min_size)
         if not found:
             self.fail(label, text, f"цитаты «{_clip(quote, _ERROR_TEXT)}» нет дословно ни в одном источнике")
             return None
@@ -353,10 +363,12 @@ def _check(draft: CardDraft, shown: Mapping[int, str]) -> _Checked:
             )
     for i, number in enumerate(draft.numbers):
         label = f"numbers[{i}]"
-        if c.quoted(label, number.what, [], number.quote) is None:
+        # у числа цитата может быть короткой («11,92 ₽»): значение всё равно сверяется с ней
+        if c.quoted(label, number.what, [], number.quote, min_size=1) is None:
             continue
         value = abs(Decimal(repr(number.value)))
-        if value not in numbers(number.quote):
+        # и в источнике отдельным числом: короткая цитата «4» нашлась бы и внутри «14»
+        if value not in numbers(number.quote) or value not in c.all_numbers:
             c.fail(label, number.what, f"значения {show_number(value)} нет в цитате")
             continue
         out.numbers.append(
@@ -449,7 +461,7 @@ def _assemble(draft: CardDraft, checked: _Checked, title: str, strong: frozenset
     if checked.summary_ok:
         summary = draft.summary
     else:
-        summary = " ".join(f.text for f in checked.facts[:2]) or title
+        summary = " ".join(_sentence(f.text) for f in checked.facts[:2]) or title
     return EventCard(
         summary=_clip(summary, 600),
         facts=checked.facts[:10],
