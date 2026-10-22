@@ -2,17 +2,26 @@ import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from app import contracts
+from app.clients.profile import profile_compact
 from app.contracts import (
     Access,
+    AgentStep,
+    CompanyProfile,
+    Event,
     EventCard,
     Evidence,
     Feature,
+    Hypothesis,
     Insight,
+    InsightContext,
     InsightResult,
     NewsRef,
     SessionCtx,
+    Spent,
+    TraceRecord,
     UserRole,
 )
+from app.fixtures import load_fixture
 
 EVIDENCE = {
     "id": "E1",
@@ -206,3 +215,47 @@ def test_defaulted_fields_are_required_in_serialization_schema():
     assert {"tokens_in", "tokens_out", "cost_rub", "ms", "tool_call"} <= required
     filters = contracts.FeedFilters.model_json_schema(mode="serialization")
     assert {"impact", "factor"} <= set(filters["required"])
+
+
+def _context(**over) -> InsightContext:
+    events = load_fixture("events.json", TypeAdapter(list[Event]))
+    profile = next(
+        p
+        for p in load_fixture("profiles.json", TypeAdapter(list[CompanyProfile]))
+        if p.company_id == "C-DEV-01"
+    )
+    data = {
+        "event": events[0],
+        "profile": profile_compact(profile, UserRole.cfo),
+        "user_role": UserRole.cfo,
+        "chains": [],
+        "plan": None,
+        "evidence": [],
+        "spent": Spent(),
+    }
+    return InsightContext(**(data | over))
+
+
+def test_insight_context_roundtrip():
+    ctx = _context(evidence=[Evidence.model_validate(EVIDENCE)])
+    assert InsightContext.model_validate_json(ctx.model_dump_json()) == ctx
+
+
+def test_insight_context_rejects_duplicate_evidence_ids():
+    evidence = Evidence.model_validate(EVIDENCE)
+    with pytest.raises(ValidationError, match="повторяются"):
+        _context(evidence=[evidence, evidence])
+
+
+def test_trace_record_accepts_fixture_steps():
+    steps = load_fixture("trace.json", TypeAdapter(list[AgentStep]))
+    records = [TraceRecord(step=s, context=None) for s in steps]
+    assert [r.step for r in records] == steps
+    with_context = TraceRecord(step=steps[0], context=_context())
+    assert TraceRecord.model_validate_json(with_context.model_dump_json()) == with_context
+
+
+def test_hypothesis_requires_text():
+    with pytest.raises(ValidationError):
+        Hypothesis(text="", factor=None, confirm="", refute="")
+    assert Hypothesis(text="Ставка давит на кредиты", factor="key_rate", confirm="а", refute="б").factor

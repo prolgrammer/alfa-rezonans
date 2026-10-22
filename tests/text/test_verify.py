@@ -5,6 +5,7 @@ from app.text.sanitize import COMMAND_MARK, TRUNCATED_MARK, strip_marks
 from app.text.verify import (
     clip,
     date_mentioned,
+    date_words,
     find_quote,
     mark_in,
     normalize,
@@ -303,3 +304,9 @@ def test_year_like_range_start_gets_unit_unless_row_label():
         (Decimal("6.5"), None, "%"),
         (Decimal("4.0"), None, "%"),
     }
+
+
+def test_date_words():
+    assert date_words(dt.date(2026, 10, 24)) == "24 октября 2026 года"
+    assert date_words(dt.date(2027, 1, 1)) == "1 января 2027 года"
+    assert date_mentioned(dt.date(2026, 10, 24), f"заседание {date_words(dt.date(2026, 10, 24))}")
