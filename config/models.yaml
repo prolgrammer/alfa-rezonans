@@ -65,7 +65,7 @@ models:
 # предохранитель, а цепочку замыкает доступная модель. Писатель разбора не падает на DeepSeek: это критик.
 tasks:
   news_filter:
-    {model: gemma-4-26b-a4b, fallback: [qwen3.6-35b-a3b], temperature: 0.1, max_tokens: 600, essential: false}
+    {model: gemma-4-26b-a4b, fallback: [qwen3.6-35b-a3b], temperature: 0.1, max_tokens: 1000, essential: false}
   event_card:
     {model: qwen3.6-35b-a3b, fallback: [glm-5.3-flash, deepseek-v4.1-flash], temperature: 0.1, max_tokens: 1500, essential: false}
   rank_judge:
