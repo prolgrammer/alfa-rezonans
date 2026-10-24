@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -53,3 +54,8 @@ def logged_in(anon) -> TestClient:
 def client(logged_in) -> TestClient:
     logged_in.headers["X-CSRF-Token"] = MOCK_CSRF_TOKEN
     return logged_in
+
+
+def pytest_asyncio_loop_factories(config, item):
+    # psycopg в асинхронном режиме не работает на ProactorEventLoop, который по умолчанию в Windows
+    return {"selector": asyncio.SelectorEventLoop}
