@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from typing import NoReturn
 
 from app.agent.run import run_chat
+from app.api.accounts import company_ids, company_names
 from app.api.errors import ApiError
 from app.api.schemas import (
     LOW_DATA_COMPLETENESS,
@@ -56,10 +57,19 @@ def not_implemented(item: str) -> NoReturn:
 
 class LiveBackend:
     async def company_name(self, ctx: SessionCtx) -> str:
-        not_implemented("BE-9")
+        return company_names().get(ctx.company_id, ctx.company_id)
 
     async def has_company(self, company: str) -> bool:
-        not_implemented("BE-9")
+        if company in company_ids():
+            return True
+        pool = await get_pool()
+        async with pool.connection() as conn:
+            # пул отдаёт строки словарями (dict_row)
+            cur = await conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM companies WHERE id = %s) AS found", (company,)
+            )
+            row = await cur.fetchone()
+        return bool(row and row["found"])
 
     async def feed(self, ctx: SessionCtx, period: Period, filters: FeedFilters) -> Feed:
         profile = await get_profile(ctx.company_id)
