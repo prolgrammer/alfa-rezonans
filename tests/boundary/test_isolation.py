@@ -77,7 +77,8 @@ def test_tool_arguments_have_no_company_id():
 
 
 def test_get_profile_is_called_only_by_agent_tools_and_api():
-    allowed = ("app/agent/tools.py", "app/api/", "app/clients/profile.py")
+    # краткий разбор получает компанию из SessionCtx, как и инструменты
+    allowed = ("app/agent/tools.py", "app/agent/brief.py", "app/api/", "app/clients/profile.py")
     offenders = []
     for path in APP_DIR.rglob("*.py"):
         rel = path.relative_to(APP_DIR.parent).as_posix()

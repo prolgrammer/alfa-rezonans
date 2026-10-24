@@ -1,7 +1,7 @@
 import datetime as dt
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, JsonValue, model_validator
 
 from app.contracts._base import ContractModel
 from app.contracts.enums import (
@@ -15,8 +15,11 @@ from app.contracts.enums import (
     InsightMode,
     Magnitude,
     Origin,
+    UserRole,
 )
+from app.contracts.events import Event
 from app.contracts.market import MarketSeries
+from app.contracts.profile import CompactProfile
 from app.contracts.types import EvidenceId, Slug
 
 
@@ -184,3 +187,49 @@ class ChatAnswer(ContractModel):
 class ChatTurn(ContractModel):
     author: ChatAuthor
     text: str = Field(min_length=1, max_length=2000)
+
+
+# потраченный бюджет разбора
+class Spent(ContractModel):
+    rub: float = Field(ge=0, default=0)
+    tool_calls: int = Field(ge=0, default=0)
+    ms: int = Field(ge=0, default=0)
+
+
+class PlanStep(ContractModel):
+    tool: Slug
+    args: dict[str, JsonValue]
+    why: str = Field(max_length=300)
+
+
+class Hypothesis(ContractModel):
+    text: str = Field(min_length=1, max_length=300)
+    # None — новая связь, которой нет в цепочках
+    factor: Slug | None
+    confirm: str = Field(max_length=300)
+    refute: str = Field(max_length=300)
+
+
+class InsightPlan(ContractModel):
+    hypotheses: list[Hypothesis] = Field(max_length=4)
+    steps: list[PlanStep] = Field(max_length=6)
+
+
+class InsightContext(ContractModel):
+    """Общий объект шагов разбора; компании в нём нет, она берётся только из сессии."""
+
+    event: Event
+    profile: CompactProfile | None
+    # дублирует profile.user_role: профиля может не быть
+    user_role: UserRole
+    chains: list[Chain]
+    plan: InsightPlan | None
+    evidence: list[Evidence]
+    spent: Spent
+
+    @model_validator(mode="after")
+    def _evidence_ids_unique(self) -> "InsightContext":
+        ids = [e.id for e in self.evidence]
+        if len(set(ids)) != len(ids):
+            raise ValueError("идентификаторы доказательств повторяются")
+        return self

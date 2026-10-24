@@ -221,3 +221,7 @@ def date_mentioned(date: dt.date, text: str) -> bool:
         rf"(?<!\d){date.year}-{month:02d}-{day:02d}(?!\d)",
     )
     return any(re.search(p, text) for p in patterns)
+
+
+def date_words(date: dt.date) -> str:
+    return f"{date.day} {_MONTHS[date.month - 1]} {date.year} года"

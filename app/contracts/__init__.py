@@ -58,15 +58,20 @@ from app.contracts.insight import (
     ChatTurn,
     Evidence,
     FeatureRef,
+    Hypothesis,
     Impact,
     Insight,
     InsightChecks,
+    InsightContext,
+    InsightPlan,
     InsightResult,
     Link,
     MarketRef,
     NewsRef,
     Offer,
+    PlanStep,
     Scenario,
+    Spent,
     Statement,
 )
 from app.contracts.market import (
@@ -99,6 +104,7 @@ from app.contracts.session import (
 from app.contracts.trace import (
     AgentStep,
     ToolCallRecord,
+    TraceRecord,
 )
 
 __all__ = [
@@ -144,11 +150,14 @@ __all__ = [
     "FeedbackVerdict",
     "ForecastMatch",
     "Horizon",
+    "Hypothesis",
     "Impact",
     "ImpactDirection",
     "Insight",
     "InsightChecks",
+    "InsightContext",
     "InsightMode",
+    "InsightPlan",
     "InsightResult",
     "InsightStatus",
     "JudgeScore",
@@ -164,6 +173,7 @@ __all__ = [
     "Origin",
     "OverrideOrigin",
     "Period",
+    "PlanStep",
     "ProfileSection",
     "RawItemIn",
     "RawItemStatus",
@@ -174,6 +184,7 @@ __all__ = [
     "SectorRole",
     "SessionCtx",
     "SourceFragment",
+    "Spent",
     "SourceKind",
     "SourceType",
     "Statement",
@@ -182,6 +193,7 @@ __all__ = [
     "ThesisKind",
     "ThesisNumber",
     "ToolCallRecord",
+    "TraceRecord",
     "UserRole",
     "WhyChip",
 ]

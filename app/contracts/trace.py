@@ -2,6 +2,7 @@ from pydantic import Field, JsonValue
 
 from app.contracts._base import ContractModel
 from app.contracts.enums import StepKind
+from app.contracts.insight import InsightContext
 from app.contracts.types import Slug
 
 
@@ -26,3 +27,10 @@ class AgentStep(ContractModel):
     cost_rub: float = Field(ge=0, default=0)
     ms: int = Field(ge=0, default=0)
     tool_call: ToolCallRecord | None = None
+
+
+class TraceRecord(ContractModel):
+    """Строка agent_traces.step: шаг для API и снимок контекста после него."""
+
+    step: AgentStep
+    context: InsightContext | None
