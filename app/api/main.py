@@ -5,7 +5,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.routing import Match
 
 from app.api.backend import Backend
-from app.api.deps import MockSession
+from app.api.deps import Authenticator, MockAuth
 from app.api.errors import ApiError, install_handlers
 from app.api.live import LiveBackend
 from app.api.mock import MockBackend
@@ -23,6 +23,7 @@ from app.api.routes import (
     news,
     profile,
 )
+from app.api.sessions import DbAuth
 from app.api.sse import sse_component_schemas
 from app.settings import Settings, get_settings
 
@@ -93,7 +94,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     backend: Backend = MockBackend() if settings.mock else LiveBackend()
     app.state.backend = backend
-    app.state.mock_session = MockSession.initial()
+    authenticator: Authenticator = MockAuth(settings) if settings.mock else DbAuth(settings)
+    app.state.auth = authenticator
 
     app.add_middleware(
         CORSMiddleware,
