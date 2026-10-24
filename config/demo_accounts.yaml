@@ -1,0 +1,36 @@
+# Тестовые учётки, которые создаёт `orientir seed`. Пароль у всех один — DEMO_PASSWORD из окружения.
+# Компании — те, что есть в фикстурах: профиль в боевом режиме пока читается из них (до DQ-1).
+# После загрузки CSV сюда встают компании, которые отберёт scripts/pick_demo_clients.py.
+
+# Имя для интерфейса: в CSV у компаний только обезличенный ID.
+companies:
+  C-DEV-01: ООО «Стройинвест» (демо)
+  C-IT-01: ООО «Нордсофт» (демо)
+
+# company_id обязателен и у эксперта с администратором: с него начинается показ, дальше — /api/demo/switch.
+accounts:
+  - login: anna
+    company_id: C-DEV-01
+    user_role: cfo
+    access: client
+    interests: [key_rate]
+  - login: oleg
+    company_id: C-DEV-01
+    user_role: owner
+    access: client
+    interests: []
+  - login: irina
+    company_id: C-IT-01
+    user_role: chief_accountant
+    access: client
+    interests: [cny_rub]
+  - login: expert
+    company_id: C-DEV-01
+    user_role: cfo
+    access: expert
+    interests: []
+  - login: admin
+    company_id: C-DEV-01
+    user_role: ceo
+    access: admin
+    interests: []

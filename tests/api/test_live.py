@@ -26,18 +26,12 @@ def test_session_routes_are_unauthorized(live, path):
     response = live.get(path)
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthorized"
-    assert "BE-9" in response.json()["error"]["message"]
+    assert response.json()["error"]["message"] == "Нужно войти"
 
 
 def test_mutation_without_session_is_unauthorized(live):
     response = live.post("/api/feedback", json={"event_id": 1, "verdict": "useful"})
     assert response.status_code == 401
-
-
-def test_login_is_not_implemented(live):
-    response = live.post("/api/auth/login", json={"login": "a", "password": "b"})
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "not_implemented"
 
 
 async def test_live_backend_uses_boundary_functions():

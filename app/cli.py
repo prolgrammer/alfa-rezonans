@@ -80,8 +80,24 @@ def openapi(
 
 @app.command()
 def seed() -> None:
-    """Тестовые учётки и справочники."""
-    not_implemented("BE-9")
+    """Создать или обновить тестовые учётки из config/demo_accounts.yaml."""
+    # импорт здесь: модуль читает каталог факторов, остальным командам он не нужен
+    from app.api.accounts import AccountsError, demo_accounts, seed_accounts
+
+    settings = get_settings()
+    try:
+        accounts = demo_accounts().accounts
+        with psycopg.connect(settings.database_url) as conn:
+            seed_accounts(conn, accounts, settings.demo_password.get_secret_value())
+    except (AccountsError, psycopg.Error) as exc:
+        typer.echo(f"ошибка: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    header = ("логин", "компания", "роль", "права")
+    rows = [header, *((a.login, a.company_id, a.user_role.value, a.access.value) for a in accounts)]
+    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    for row in rows:
+        typer.echo("  ".join(cell.ljust(w) for cell, w in zip(row, widths, strict=True)).rstrip())
+    typer.echo(f"Учёток: {len(rows) - 1}. Пароль — значение DEMO_PASSWORD")
 
 
 @app.command("load-clients")
