@@ -16,7 +16,7 @@ def verify_password(password_hash: str | None, password: str) -> bool:
         _hasher.verify(password_hash or _DUMMY_HASH, password)
     except (VerificationError, InvalidHashError):
         return False
-    return password_hash is not None
+    return bool(password_hash)
 
 
 def needs_rehash(password_hash: str) -> bool:

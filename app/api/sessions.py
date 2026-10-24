@@ -44,16 +44,30 @@ async def _audit(conn: AsyncConnection[Any], user_id: int | None, action: str, d
 
 
 def _session_from_row(row: dict[str, Any]) -> AuthSession:
-    company_id = row["acting_company_id"] or row["company_id"]
+    access = Access(row["access"])
+    # Выбор клиента действует, только пока у учётки есть право выбирать: после понижения прав сессия
+    # возвращается к своей компании.
+    acting = access in (Access.expert, Access.admin)
+    company_id = (acting and row["acting_company_id"]) or row["company_id"]
     if company_id is None:
         raise ApiError(403, "forbidden", "Учётке не назначена компания")
     ctx = SessionCtx(
         user_id=row["user_id"],
         company_id=company_id,
-        user_role=UserRole(row["acting_user_role"] or row["user_role"]),
-        access=Access(row["access"]),
+        user_role=UserRole((acting and row["acting_user_role"]) or row["user_role"]),
+        access=access,
     )
     return AuthSession(ctx=ctx, login=row["login"], csrf_token=row["csrf_token"])
+
+
+_UNLOCKED = "(locked_until IS NULL OR locked_until <= now())"
+# argon2id берёт 64 МиБ на проверку: без ограничения поток входов съел бы память процесса.
+_HASH_SLOTS = asyncio.Semaphore(4)
+
+
+async def _verify(password_hash: str | None, password: str) -> bool:
+    async with _HASH_SLOTS:
+        return await asyncio.to_thread(verify_password, password_hash, password)
 
 
 _SESSION_SELECT = (
@@ -87,56 +101,72 @@ class DbAuth:
         pool = await get_pool()
         async with pool.connection() as conn:
             await conn.execute("DELETE FROM sessions WHERE expires_at <= now()")
-            outcome = await self._attempt(conn, login, password, old_token)
+            cur = await conn.execute(
+                "SELECT id, login, password_hash, company_id, user_role, access, "
+                "locked_until > now() AS locked, "
+                "CEIL(EXTRACT(EPOCH FROM (locked_until - now())) / 60)::int AS lock_minutes "
+                "FROM users WHERE login = %s",
+                (login,),
+            )
+            user = await cur.fetchone()
+            if user is not None and user["locked"]:
+                await _audit(conn, user["id"], "login_locked", {"login": login, "reason": "still_locked"})
+        if user is not None and user["locked"]:
+            raise self._locked_error(user["lock_minutes"])
+        # Хеш считается без соединения: иначе десяток входов подряд занял бы весь пул.
+        valid = await _verify(user["password_hash"] if user else None, password)
+        async with pool.connection() as conn:
+            outcome = await self._finish(conn, user, login, password, valid, old_token)
         # Исключения — после коммита: счётчик неудач и журнал не должны откатываться вместе с ответом.
         if isinstance(outcome, ApiError):
             raise outcome
         return outcome
 
-    async def _attempt(
-        self, conn: AsyncConnection[Any], login: str, password: str, old_token: str | None
+    async def _finish(
+        self,
+        conn: AsyncConnection[Any],
+        user: dict[str, Any] | None,
+        login: str,
+        password: str,
+        valid: bool,
+        old_token: str | None,
     ) -> tuple[AuthSession, str] | ApiError:
-        cur = await conn.execute(
-            "SELECT id, login, password_hash, company_id, user_role, access, "
-            "locked_until > now() AS locked, "
-            "CEIL(EXTRACT(EPOCH FROM (locked_until - now())) / 60)::int AS lock_minutes "
-            "FROM users WHERE login = %s",
-            (login,),
-        )
-        user = await cur.fetchone()
         wrong = ApiError(401, "unauthorized", "Неверный логин или пароль")
         if user is None:
-            # Фиктивная проверка выравнивает время ответа с существующим логином.
-            await asyncio.to_thread(verify_password, None, password)
-            await _audit(conn, None, "login_failed", {"login": login, "reason": "unknown_login"})
+            # Введённый логин не пишем: в поле логина нередко по ошибке набирают пароль.
+            await _audit(conn, None, "login_failed", {"reason": "unknown_login"})
             return wrong
-        if user["locked"]:
-            await _audit(conn, user["id"], "login_locked", {"login": login, "reason": "still_locked"})
-            return self._locked_error(user["lock_minutes"])
-        valid = await asyncio.to_thread(verify_password, user["password_hash"], password)
+        # Обе записи — только если учётку не заблокировал параллельный запрос, пока считался хеш:
+        # иначе пачка одновременных попыток обходила бы лимит, а верный пароль снимал бы блокировку.
         if not valid:
             cur = await conn.execute(
                 "UPDATE users SET "
                 "failed_logins = CASE WHEN failed_logins + 1 >= %s THEN 0 ELSE failed_logins + 1 END, "
                 "locked_until = CASE WHEN failed_logins + 1 >= %s "
                 "THEN now() + make_interval(mins => %s) ELSE locked_until END "
-                "WHERE id = %s RETURNING failed_logins = 0 AS just_locked",
+                f"WHERE id = %s AND {_UNLOCKED} RETURNING failed_logins = 0 AS just_locked",
                 (MAX_FAILED_LOGINS, MAX_FAILED_LOGINS, LOCK_MINUTES, user["id"]),
             )
             updated = await cur.fetchone()
-            if updated is not None and updated["just_locked"]:
+            if updated is None:
+                return await self._locked_now(conn, user["id"])
+            if updated["just_locked"]:
                 await _audit(
                     conn, user["id"], "login_locked", {"login": login, "reason": "too_many_failures"}
                 )
                 return self._locked_error(LOCK_MINUTES)
             await _audit(conn, user["id"], "login_failed", {"login": login, "reason": "wrong_password"})
             return wrong
-        if user["password_hash"] and needs_rehash(user["password_hash"]):
+        cur = await conn.execute(
+            f"UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = %s AND {_UNLOCKED} "
+            "RETURNING id",
+            (user["id"],),
+        )
+        if await cur.fetchone() is None:
+            return await self._locked_now(conn, user["id"])
+        if needs_rehash(user["password_hash"]):
             new_hash = await asyncio.to_thread(hash_password, password)
             await conn.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_hash, user["id"]))
-        await conn.execute(
-            "UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = %s", (user["id"],)
-        )
         if user["company_id"] is None:
             return ApiError(403, "forbidden", "Учётке не назначена компания")
         # Старую сессию снимаем только при успешном входе: неудачная попытка не должна выбрасывать из системы.
@@ -157,6 +187,16 @@ class DbAuth:
             access=Access(user["access"]),
         )
         return AuthSession(ctx=ctx, login=user["login"], csrf_token=csrf), token
+
+    async def _locked_now(self, conn: AsyncConnection[Any], user_id: int) -> ApiError:
+        cur = await conn.execute(
+            "SELECT GREATEST(CEIL(EXTRACT(EPOCH FROM (locked_until - now())) / 60)::int, 1) AS minutes "
+            "FROM users WHERE id = %s",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        await _audit(conn, user_id, "login_locked", {"reason": "still_locked"})
+        return self._locked_error(row["minutes"] if row and row["minutes"] else LOCK_MINUTES)
 
     @staticmethod
     def _locked_error(minutes: int) -> ApiError:

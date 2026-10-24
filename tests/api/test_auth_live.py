@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -177,6 +178,27 @@ async def test_success_resets_failed_counter(client, db):
         assert (await login(client, password="wrong")).status_code == 401
 
 
+async def test_parallel_wrong_passwords_cannot_bypass_lock(client, db):
+    # Пачка одновременных попыток: пока считались хеши, учётку уже заблокировали
+    answers = await asyncio.gather(*(login(client, password="wrong") for _ in range(8)))
+    codes = [r.status_code for r in answers]
+    assert codes.count(401) == 4
+    assert codes.count(429) == 4
+    assert user_row(db, "anna")[0] == 0
+    assert (await login(client)).status_code == 429
+
+
+async def test_unknown_login_is_not_written_to_audit(client, db):
+    await login(client, "my-secret-typed-into-login")
+    details = db.execute("SELECT details FROM audit_log").fetchone()[0]
+    assert details == {"reason": "unknown_login"}
+
+
+async def test_empty_hash_never_matches(client, db):
+    db.execute("UPDATE users SET password_hash = '' WHERE login = 'anna'")
+    assert (await login(client, password="orientir-dummy-password")).status_code == 401
+
+
 async def test_lock_is_per_account(client, db):
     for _ in range(5):
         await login(client, password="wrong")
@@ -265,6 +287,16 @@ async def test_switch_needs_csrf(client):
     await login(client, "expert")
     response = await client.post("/api/demo/switch", json={"company_id": "C-IT-01", "user_role": "cfo"})
     assert response.status_code == 403
+
+
+async def test_switch_is_ignored_after_access_downgrade(client, db):
+    csrf = (await login(client, "expert")).json()["csrf_token"]
+    await client.post(
+        "/api/demo/switch", json={"company_id": "C-IT-01", "user_role": "treasurer"}, headers={CSRF: csrf}
+    )
+    db.execute("UPDATE users SET access = 'client' WHERE login = 'expert'")
+    me = (await client.get("/api/me")).json()
+    assert (me["company_id"], me["user_role"], me["access"]) == ("C-DEV-01", "cfo", "client")
 
 
 async def test_audit_log_records_events_without_passwords(client, db):
