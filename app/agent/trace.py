@@ -38,9 +38,11 @@ class PgTraceStore:
             if reset and insight_id is not None:
                 await conn.execute("DELETE FROM agent_traces WHERE insight_id = %s", (insight_id,))
             async with conn.cursor() as cursor:
+                # запись, легшая в БД после таймаута, придёт ещё раз с flush: тот же шаг перезаписывается
                 await cursor.executemany(
                     "INSERT INTO agent_traces (insight_id, chat_id, seq, step) "
-                    "VALUES (%s, %s, %s, %s::jsonb)",
+                    "VALUES (%s, %s, %s, %s::jsonb) "
+                    "ON CONFLICT (insight_id, seq) DO UPDATE SET step = EXCLUDED.step",
                     [(insight_id, chat_id, seq, step) for seq, step in rows],
                 )
 
@@ -152,11 +154,10 @@ class TraceSink:
 async def _load_records(insight_id: int) -> list[TraceRecord]:
     async with (await get_pool()).connection() as conn:
         cursor = await conn.execute(
-            "SELECT seq, step FROM agent_traces WHERE insight_id = %s ORDER BY seq, id", (insight_id,)
+            "SELECT seq, step FROM agent_traces WHERE insight_id = %s ORDER BY seq", (insight_id,)
         )
         found = await cursor.fetchall()
-    # при повторной записи после обрыва связи у одного seq несколько строк: берём последнюю
-    records: dict[int, TraceRecord] = {}
+    records: list[TraceRecord] = []
     for row in found:
         raw, seq = row["step"], row["seq"]
         try:
@@ -173,8 +174,8 @@ async def _load_records(insight_id: int) -> list[TraceRecord]:
                 log.warning(
                     "снимок контекста разбора %s, шаг %s не проходит контракт, отброшен", insight_id, seq
                 )
-        records[seq] = TraceRecord(step=step, context=context)
-    return [records[seq] for seq in sorted(records)]
+        records.append(TraceRecord(step=step, context=context))
+    return records
 
 
 async def load_trace(insight_id: int) -> list[AgentStep]:

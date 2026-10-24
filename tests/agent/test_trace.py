@@ -195,16 +195,25 @@ async def test_rerun_replaces_trace(db, insight_id, ctx):
     assert [s.title for s in await load_trace(insight_id)] == ["x", "y"]
 
 
-async def test_duplicate_seq_takes_last(db, insight_id, ctx):
+async def test_repeated_write_overwrites_seq(db, insight_id, ctx):
     one = await TraceSink().record(ctx, StepKind.tool, "первый", "", "")
     two = one.model_copy(update={"title": "второй"})
-    async with db.connection() as conn:
-        for step in (one, two):
-            await conn.execute(
-                "INSERT INTO agent_traces (insight_id, seq, step) VALUES (%s, 1, %s::jsonb)",
-                (insight_id, TraceRecord(step=step, context=None).model_dump_json()),
-            )
+    store = trace.PgTraceStore()
+    # запись легла в БД, но ответ опоздал: flush шлёт тот же seq ещё раз
+    for step in (one, two):
+        row = (1, TraceRecord(step=step, context=None).model_dump_json())
+        await store.write(insight_id, None, [row], reset=False)
     assert [s.title for s in await load_trace(insight_id)] == ["второй"]
+
+
+async def test_upsert_skips_chat_rows(db):
+    # у строк чата insight_id пуст: ключ их не касается, ON CONFLICT не срабатывает и не падает
+    store = trace.PgTraceStore()
+    for _ in range(2):
+        await store.write(None, CHAT, [(1, "{}")], reset=False)
+    async with db.connection() as conn:
+        cursor = await conn.execute("SELECT count(*) AS n FROM agent_traces WHERE chat_id = %s", (CHAT,))
+        assert (await cursor.fetchone())["n"] == 2
 
 
 async def test_invalid_row_skipped(db, insight_id, ctx, caplog):
