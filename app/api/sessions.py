@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 
 from app.api.errors import ApiError
 from app.api.passwords import hash_password, needs_rehash, verify_password
+from app.api.schemas import DemoSwitch
 from app.contracts import Access, SessionCtx, UserRole
 from app.db import get_pool
 from app.settings import Settings
@@ -86,16 +87,14 @@ class DbAuth:
         pool = await get_pool()
         async with pool.connection() as conn:
             await conn.execute("DELETE FROM sessions WHERE expires_at <= now()")
-            if old_token:
-                await conn.execute("DELETE FROM sessions WHERE token_hash = %s", (hash_token(old_token),))
-            outcome = await self._attempt(conn, login, password)
+            outcome = await self._attempt(conn, login, password, old_token)
         # Исключения — после коммита: счётчик неудач и журнал не должны откатываться вместе с ответом.
         if isinstance(outcome, ApiError):
             raise outcome
         return outcome
 
     async def _attempt(
-        self, conn: AsyncConnection[Any], login: str, password: str
+        self, conn: AsyncConnection[Any], login: str, password: str, old_token: str | None
     ) -> tuple[AuthSession, str] | ApiError:
         cur = await conn.execute(
             "SELECT id, login, password_hash, company_id, user_role, access, "
@@ -140,6 +139,9 @@ class DbAuth:
         )
         if user["company_id"] is None:
             return ApiError(403, "forbidden", "Учётке не назначена компания")
+        # Старую сессию снимаем только при успешном входе: неудачная попытка не должна выбрасывать из системы.
+        if old_token:
+            await conn.execute("DELETE FROM sessions WHERE token_hash = %s", (hash_token(old_token),))
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(32)
         await conn.execute(
@@ -173,15 +175,13 @@ class DbAuth:
             await conn.execute("DELETE FROM sessions WHERE token_hash = %s", (hash_token(token),))
             await _audit(conn, session.ctx.user_id, "logout", {"login": session.login})
 
-    async def switch(
-        self, token: str | None, session: AuthSession, company_id: str, user_role: UserRole
-    ) -> AuthSession:
+    async def switch(self, token: str | None, session: AuthSession, choice: DemoSwitch) -> AuthSession:
         pool = await get_pool()
         async with pool.connection() as conn:
             cur = await conn.execute(
                 "UPDATE sessions SET acting_company_id = %s, acting_user_role = %s "
                 "WHERE token_hash = %s RETURNING 1 AS ok",
-                (company_id, user_role.value, hash_token(token or "")),
+                (choice.company_id, choice.user_role.value, hash_token(token or "")),
             )
             if await cur.fetchone() is None:
                 raise _unauthorized()
@@ -189,7 +189,7 @@ class DbAuth:
                 conn,
                 session.ctx.user_id,
                 "demo_switch",
-                {"company_id": company_id, "user_role": user_role.value},
+                {"company_id": choice.company_id, "user_role": choice.user_role.value},
             )
-        ctx = session.ctx.model_copy(update={"company_id": company_id, "user_role": user_role})
+        ctx = session.ctx.model_copy(update={"company_id": choice.company_id, "user_role": choice.user_role})
         return AuthSession(ctx=ctx, login=session.login, csrf_token=session.csrf_token)

@@ -92,5 +92,5 @@ async def demo_switch(
 ) -> Me:
     if not await backend.has_company(body.company_id):
         raise ApiError(404, "not_found", "Такого клиента нет")
-    switched = await auth.switch(session_token(request), session, body.company_id, body.user_role)
+    switched = await auth.switch(session_token(request), session, body)
     return await _me(switched, backend)

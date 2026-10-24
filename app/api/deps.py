@@ -6,6 +6,7 @@ from fastapi import Depends, Request
 
 from app.api.backend import Backend
 from app.api.errors import ApiError
+from app.api.schemas import DemoSwitch
 from app.api.sessions import AuthSession
 from app.contracts import Access, SessionCtx, UserRole
 from app.settings import Settings
@@ -25,9 +26,7 @@ class Authenticator(Protocol):
 
     async def logout(self, token: str | None, session: AuthSession) -> None: ...
 
-    async def switch(
-        self, token: str | None, session: AuthSession, company_id: str, user_role: UserRole
-    ) -> AuthSession: ...
+    async def switch(self, token: str | None, session: AuthSession, choice: DemoSwitch) -> AuthSession: ...
 
 
 class MockAuth:
@@ -56,11 +55,9 @@ class MockAuth:
     async def logout(self, token: str | None, session: AuthSession) -> None:
         return None
 
-    async def switch(
-        self, token: str | None, session: AuthSession, company_id: str, user_role: UserRole
-    ) -> AuthSession:
+    async def switch(self, token: str | None, session: AuthSession, choice: DemoSwitch) -> AuthSession:
         self.session.ctx = self.session.ctx.model_copy(
-            update={"company_id": company_id, "user_role": user_role}
+            update={"company_id": choice.company_id, "user_role": choice.user_role}
         )
         return self.session
 
