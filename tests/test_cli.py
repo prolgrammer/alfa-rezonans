@@ -6,7 +6,6 @@ from app.cli import app
 runner = CliRunner()
 
 STUBS = [
-    (["seed"], "BE-9"),
     (["load-clients", "data/clients", "--report"], "DQ-1"),
     (["ingest-bank", "data/bank"], "BE-7"),
     (["collect", "--source", "cbr", "--backfill"], "BE-4"),
@@ -30,7 +29,7 @@ def test_not_implemented_command(cmd, item):
 
 def test_help_lists_all_commands():
     output = runner.invoke(app, ["--help"]).output
-    top_level = {cmd[0] for cmd, _ in STUBS} | {"migrate", "openapi", "llm"}
+    top_level = {cmd[0] for cmd, _ in STUBS} | {"migrate", "openapi", "llm", "seed"}
     for name in top_level:
         assert name in output
     sub = runner.invoke(app, ["llm", "--help"]).output
