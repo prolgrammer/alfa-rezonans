@@ -19,14 +19,16 @@ def test_migrate_up_down_up(cli_env):
     first = runner.invoke(app, ["migrate"])
     assert first.exit_code == 0
     assert "0001" in first.output
-    assert "0002" in first.output
+    assert "0003" in first.output
 
     assert runner.invoke(app, ["migrate", "up"]).exit_code == 0
 
     down = runner.invoke(app, ["migrate", "down"])
     assert down.exit_code == 0
-    assert "0002" in down.output
-    assert "0001" not in down.output
+    assert "0003" in down.output
+    assert "0002" not in down.output
+
+    assert runner.invoke(app, ["migrate", "down", "1"]).exit_code == 0
 
     last = runner.invoke(app, ["migrate", "down"])
     assert last.exit_code == 0

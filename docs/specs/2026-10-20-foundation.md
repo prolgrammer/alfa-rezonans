@@ -87,8 +87,8 @@ PostgreSQL 16 + pgvector. Миграции — пары `migrations/NNNN_<имя
 
 | Таблица | Ключевые колонки | Пишет |
 | --- | --- | --- |
-| `companies` | `id TEXT PK` (`SYNTHETIC_U`), поля CSV в нижнем регистре, `group_id`, `raw JSONB` | роль 2 (`load-clients`) |
-| `company_persons` | `company_id`, `person_id`, поля CSV | роль 2 |
+| `companies` | `id TEXT PK` (`SYNTHETIC_U`), поля CSV в нижнем регистре (в том числе `mainokved_name`, `amount_workers_fns_gradation`, `amount_workers_spark_gradation` — миграция 0003), `group_id`, `raw JSONB` | роль 2 (`load-clients`) |
+| `company_persons` | `company_id`, `person_id`, поля CSV (`rc_name`, `city_name`) | роль 2 |
 | `payments` | `payer_id`, `beneficiary_id`, `pay_amt`, `pay_cnt`, `intragroup BOOL`; PK (`payer_id`, `beneficiary_id`) | роль 2 |
 | `company_profiles` | `company_id PK`, `version`, `hash`, `completeness`, `features JSONB`, `exposures JSONB`, `computed_at` | роль 2 |
 | `group_profiles` | `group_id PK`, те же колонки | роль 2 |
@@ -105,7 +105,7 @@ PostgreSQL 16 + pgvector. Миграции — пары `migrations/NNNN_<имя
 | `bank_theses` | `id`, `doc_id`, `page`, `payload JSONB` (`BankThesis`), `factors TEXT[]`, `kind`, `published_on`, `verified BOOL NULL`, `prompt_version` | роль 1 |
 | `relevance` | `company_id`, `user_role`, `event_id`, `score`, `terms JSONB`, `stage`, `reason`, `profile_hash`, `computed_at`; PK тройка | роль 2 |
 | `insights` | `id`, `event_id`, `company_id`, `user_role`, `cache_key UNIQUE`, `status` (`pending` / `running` / `done` / `failed`), `mode` (`full` / `brief`), `payload JSONB NULL`, `cost_rub`, `created_at`, `finished_at` | роль 1 через обёртку api |
-| `agent_traces` | `id`, `insight_id NULL`, `chat_id NULL`, `seq`, `step JSONB` (`AgentStep`), `created_at` | роль 1 |
+| `agent_traces` | `id`, `insight_id NULL`, `chat_id NULL`, `seq`, `step JSONB` (`AgentStep`), `created_at`; UNIQUE (`insight_id`, `seq`) | роль 1 |
 | `tool_calls` | `id`, `insight_id NULL`, `chat_id NULL`, `user_id`, `tool`, `args JSONB`, `result_chars`, `duration_ms`, `ok`, `created_at` | роль 1 |
 | `llm_calls` | `id`, `task`, `model`, `prompt_version`, `tokens_in`, `tokens_out`, `cost_rub`, `ms`, `cached`, `fallback_from`, `error`, `lane`, `trace_id`, `created_at` | шлюз роли 1 |
 | `llm_cache` | `key TEXT PK` (sha256), `task`, `model`, `response JSONB`, `created_at` | шлюз роли 1 |
@@ -114,7 +114,7 @@ PostgreSQL 16 + pgvector. Миграции — пары `migrations/NNNN_<имя
 | `chat_messages` | `id`, `chat_id`, `user_id`, `event_id NULL`, `author` (`user` / `assistant`), `content`, `payload JSONB`, `created_at` | api |
 | `audit_log` | `id`, `user_id`, `action`, `details JSONB`, `created_at` | api |
 
-Индексы: `tsv` (GIN) у `raw_items` и `bank_chunks`; `published_at`, `last_item_at`; GIN по `factors` и `sectors`; `company_id` везде, где он есть; уникальность `insights.cache_key` и `llm_cache.key`. HNSW по векторам — отдельной миграцией, если разрешат эмбеддинги.
+Индексы: `tsv` (GIN) у `raw_items` и `bank_chunks`; `published_at`, `last_item_at`; GIN по `factors` и `sectors`; `company_id` везде, где он есть; уникальность `insights.cache_key`, `llm_cache.key` и пары `agent_traces` (`insight_id`, `seq`). HNSW по векторам — отдельной миграцией, если разрешат эмбеддинги.
 
 ## 5. Функции на границах ролей
 
